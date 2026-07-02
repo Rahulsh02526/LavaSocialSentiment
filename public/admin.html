@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Login — Social Intelligence Platform</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div class="loading-screen">
+  <span style="font-family: var(--mono); font-weight: 700; color: var(--accent); font-size: 24px;">SIP — Admin</span>
+  <div style="font-size: 13px; color: var(--text-dim); margin-bottom: 10px; text-align:center; max-width:340px;">
+    Required for tagging, adding comments, triggering YouTube fetches, and managing marketing assets.
+  </div>
+  <div style="width: 280px;">
+    <input type="password" id="adminPasswordInput" placeholder="Admin password" style="width:100%; margin-bottom:10px;">
+    <button class="primary" id="adminLoginBtn" style="width:100%;">Log In</button>
+    <div id="adminLoginError" style="color: var(--neg); font-size: 12px; margin-top: 8px; text-align:center;"></div>
+    <div id="adminLoginSuccess" style="display:none; color: var(--pos); font-size: 12px; margin-top: 8px; text-align:center;">
+      Logged in. The dashboard tab has been updated automatically — you can close this tab now.
+    </div>
+  </div>
+</div>
+
+<script>
+async function submitAdminLogin() {
+  const input = document.getElementById('adminPasswordInput');
+  const errBox = document.getElementById('adminLoginError');
+  const successBox = document.getElementById('adminLoginSuccess');
+  const btn = document.getElementById('adminLoginBtn');
+  const password = input.value;
+  if (!password) return;
+
+  btn.disabled = true;
+  errBox.textContent = '';
+  try {
+    const r = await fetch('/api/auth-admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Login failed');
+
+    // sessionStorage does NOT sync back to the tab that opened this one — each tab has its
+    // own isolated session storage. So we also push the token directly to the opener tab
+    // (if this was opened via window.open from the dashboard) so it can pick it up without
+    // a manual reload. We still save it here too, in case this tab is used standalone.
+    sessionStorage.setItem('sip_admin_token', data.token);
+    if (window.opener && !window.opener.closed) {
+      try {
+        window.opener.sessionStorage.setItem('sip_admin_token', data.token);
+        window.opener.postMessage({ type: 'sip_admin_login', token: data.token }, window.location.origin);
+      } catch (e) {
+        // cross-origin or other restriction — opener tab will just need a manual refresh
+      }
+    }
+
+    input.style.display = 'none';
+    btn.style.display = 'none';
+    successBox.style.display = 'block';
+  } catch (e) {
+    errBox.textContent = e.message;
+  }
+  btn.disabled = false;
+}
+
+document.getElementById('adminLoginBtn').addEventListener('click', submitAdminLogin);
+document.getElementById('adminPasswordInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAdminLogin(); });
+document.getElementById('adminPasswordInput').focus();
+</script>
+</body>
+</html>
