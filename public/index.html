@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Social Intelligence Platform</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div class="loading-screen" id="loadingScreen">
+  <span class="brand-mark" style="font-family: var(--mono); font-weight: 700; color: var(--accent);">SIP</span>
+  <div class="spinner" style="width:20px; height:20px;"></div>
+  <div class="status-text" id="loadingStatus">Loading...</div>
+</div>
+
+<div class="app" id="app" style="display:none;">
+  <div class="topbar">
+    <div class="brand">
+      <span class="brand-mark">SIP</span>
+      <span class="brand-name">Social Intelligence Platform</span>
+      <span class="brand-ver">v0.5</span>
+    </div>
+    <div class="topbar-right" id="topbarStats"></div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-view="query">Query &amp; Competition</div>
+    <div class="tab" data-view="overview">Overview</div>
+    <div class="tab" data-view="model">Model Deep-Dive</div>
+    <div class="tab" data-view="matrix">Competitive Matrix</div>
+    <div class="tab" data-view="gap">Gap Analysis</div>
+    <div class="tab" data-view="themes">Strategic Themes</div>
+    <div class="tab" data-view="ecom">E-com Data</div>
+    <div class="tab" data-view="youtube">YouTube</div>
+    <div class="tab" data-view="tagging">Tagging Engine</div>
+    <div class="tab" data-view="specs">Specs DB</div>
+  </div>
+
+  <div class="content">
+    <div class="view" id="view-overview"></div>
+    <div class="view" id="view-ecom"></div>
+    <div class="view" id="view-youtube"></div>
+    <div class="view" id="view-tagging"></div>
+    <div class="view" id="view-specs"></div>
+    <div class="view" id="view-matrix"></div>
+    <div class="view" id="view-gap"></div>
+    <div class="view active" id="view-query"></div>
+    <div class="view" id="view-model"></div>
+    <div class="view" id="view-themes"></div>
+  </div>
+</div>
+
+<script src="/auth.js"></script>
+<script src="/app_core.js"></script>
+<script src="/app_overview.js"></script>
+<script src="/app_ecom.js"></script>
+<script src="/app_youtube.js"></script>
+<script src="/app_tagging.js"></script>
+<script src="/app_model.js"></script>
+<script src="/app_themes.js"></script>
+<script src="/app_specs.js"></script>
+<script src="/app_query.js"></script>
+<script src="/app_matrix.js"></script>
+<script src="/app_gap.js"></script>
+</body>
+</html>
