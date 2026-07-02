@@ -17,19 +17,37 @@ module.exports = async (req, res) => {
   try {
     const supabase = getSupabaseClient();
 
-    const [modelsRes, specsRes, commentsRes, tagsRes, videoMapRes, assetsRes, progressRes] = await Promise.all([
+    const [modelsRes, specsRes, videoMapRes, assetsRes, progressRes] = await Promise.all([
       supabase.from('models').select('*').order('model_id'),
       supabase.from('specs').select('*'),
-      supabase.from('comments').select('*'),
-      supabase.from('tags').select('*'),
       supabase.from('video_map').select('*'),
       supabase.from('marketing_assets').select('*'),
       supabase.from('fetch_progress').select('*'),
     ]);
 
+    // comments and tags can exceed 1000 rows — fetch in pages of 1000
+    async function fetchAll(table, select = '*') {
+      let rows = [], from = 0, pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase.from(table).select(select).range(from, from + pageSize - 1);
+        if (error) throw new Error(`${table} query failed: ${error.message}`);
+        rows = rows.concat(data || []);
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+      }
+      return rows;
+    }
+
+    const [commentsData, tagsData] = await Promise.all([
+      fetchAll('comments'),
+      fetchAll('tags'),
+    ]);
+    const commentsRes = { data: commentsData, error: null };
+    const tagsRes = { data: tagsData, error: null };
+
     for (const [name, r] of [
-      ['models', modelsRes], ['specs', specsRes], ['comments', commentsRes],
-      ['tags', tagsRes], ['video_map', videoMapRes], ['marketing_assets', assetsRes],
+      ['models', modelsRes], ['specs', specsRes],
+      ['video_map', videoMapRes], ['marketing_assets', assetsRes],
       ['fetch_progress', progressRes],
     ]) {
       if (r.error) throw new Error(`${name} query failed: ${r.error.message}`);
