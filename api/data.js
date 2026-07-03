@@ -20,7 +20,7 @@ module.exports = async (req, res) => {
     const [modelsRes, specsRes, videoMapRes, assetsRes, progressRes] = await Promise.all([
       supabase.from('models').select('*').order('model_id'),
       supabase.from('specs').select('*'),
-      supabase.from('video_map').select('*'),
+      supabase.from('model_videos').select('*'),   // new multi-video table
       supabase.from('marketing_assets').select('*'),
       supabase.from('fetch_progress').select('*'),
     ]);
@@ -71,13 +71,15 @@ module.exports = async (req, res) => {
     const specsByModelId = {};
     specsRes.data.forEach(s => { specsByModelId[s.model_id] = s; });
 
-    // video_map and marketing_assets as model_id-keyed maps/arrays (matches old shape)
+    // fold model_videos into model_id-keyed array (multiple videos per model now)
     const videoMap = {};
-    videoMapRes.data.forEach(v => {
-      videoMap[v.model_id] = {
-        videoId: v.video_id, title: v.title, channel: v.channel,
+    (videoMapRes.data || []).forEach(v => {
+      if (!videoMap[v.model_id]) videoMap[v.model_id] = [];
+      videoMap[v.model_id].push({
+        id: v.id, videoId: v.video_id, videoType: v.video_type,
+        title: v.title, channel: v.channel,
         mappedAt: v.mapped_at, lastFetchedAt: v.last_fetched_at, newestCommentSeen: v.newest_comment_seen,
-      };
+      });
     });
 
     const marketingAssets = {};
