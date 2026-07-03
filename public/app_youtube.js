@@ -107,20 +107,45 @@ function renderYtMappedList() {
     box.innerHTML = `<div class="empty-state"><div class="title">No models mapped yet</div><div class="desc">Run a fetch batch (manually or wait for the daily cron) to start mapping videos.</div></div>`;
     return;
   }
-  box.innerHTML = entries.map(([modelId, v]) => {
+  box.innerHTML = entries.map(([modelId, videos]) => {
     const phone = STATE.phones.find(p => p.model_id == modelId);
     const ytCommentCount = STATE.comments.filter(c => c.model_id == modelId && c.source === 'YouTube').length;
-    const lastFetch = v.lastFetchedAt ? new Date(v.lastFetchedAt).toLocaleString() : 'never';
+    // videos is now an array — find official video if exists
+    const officialVideo = Array.isArray(videos) ? videos.find(v => v.videoType === 'official') : null;
+    const reviewerVideos = Array.isArray(videos) ? videos.filter(v => v.videoType === 'reviewer') : [];
+    const totalVideos = Array.isArray(videos) ? videos.length : 0;
+
     return `
-      <div class="model-card" style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <div class="model-card-name">${phone ? phone.model : modelId}</div>
-          <div class="model-card-meta">${escapeHtml(v.title||'')} · ${escapeHtml(v.channel||'')} · last fetched: ${lastFetch}</div>
+      <div class="model-card" style="margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div>
+            <div class="model-card-name">${phone ? phone.model : modelId}</div>
+            <div class="model-card-meta">${totalVideos} video${totalVideos===1?'':'s'} mapped · ${ytCommentCount} YT comments pulled</div>
+          </div>
+          <span class="badge gray">${totalVideos} videos</span>
         </div>
-        <div style="display:flex; align-items:center; gap:10px;">
-          <span class="badge gray">${ytCommentCount} pulled</span>
-          <a href="https://youtube.com/watch?v=${v.videoId}" target="_blank" style="font-size:11px;">View ↗</a>
-        </div>
+        ${officialVideo ? `
+        <div style="margin-top:8px; padding:6px 10px; background:var(--panel-2); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-size:10px; color:var(--pos); font-weight:600; margin-right:6px;">OFFICIAL</span>
+            <span style="font-size:12px;">${escapeHtml(officialVideo.title||'')}</span>
+            <span style="font-size:11px; color:var(--text-faint);"> · ${escapeHtml(officialVideo.channel||'')}</span>
+          </div>
+          <a href="https://youtube.com/watch?v=${officialVideo.videoId}" target="_blank" style="font-size:11px; flex-shrink:0; margin-left:10px;">View ↗</a>
+        </div>` : ''}
+        ${reviewerVideos.length ? `
+        <div style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">
+          ${reviewerVideos.slice(0,3).map(v => `
+          <div style="padding:4px 10px; background:var(--panel-2); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <span style="font-size:10px; color:var(--text-faint); font-weight:600; margin-right:6px;">REVIEWER</span>
+              <span style="font-size:11px;">${escapeHtml(v.title||'')}</span>
+              <span style="font-size:11px; color:var(--text-faint);"> · ${escapeHtml(v.channel||'')}</span>
+            </div>
+            <a href="https://youtube.com/watch?v=${v.videoId}" target="_blank" style="font-size:11px; flex-shrink:0; margin-left:10px;">View ↗</a>
+          </div>`).join('')}
+          ${reviewerVideos.length > 3 ? `<div style="font-size:11px; color:var(--text-faint); padding-left:10px;">+${reviewerVideos.length - 3} more reviewer videos</div>` : ''}
+        </div>` : ''}
       </div>
     `;
   }).join('');
