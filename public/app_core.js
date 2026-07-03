@@ -121,11 +121,14 @@ function setupTabs() {
 function renderTopbar() {
   const taggedCount = STATE.comments.filter(c => c.tag).length;
   const activeCount = STATE.phones.filter(p => getLifecycleStatus(p) === 'active').length;
+  const ecomCount = STATE.comments.filter(c => c.source === 'Amazon' || c.source === 'Flipkart').length;
+  const ytCount = STATE.comments.filter(c => c.source === 'YouTube').length;
   const el = document.getElementById('topbarStats');
   el.innerHTML = `
     <div class="stat-chip"><span>Models</span><b>${STATE.phones.length}</b></div>
-    <div class="stat-chip"><span>Comments</span><b>${STATE.comments.length}</b></div>
-    <div class="stat-chip"><span>Tagged</span><b>${taggedCount}/${STATE.comments.length}</b></div>
+    <div class="stat-chip" title="Amazon + Flipkart reviews"><span>E-com</span><b>${ecomCount.toLocaleString('en-IN')}</b></div>
+    <div class="stat-chip" title="YouTube comments"><span>YouTube</span><b>${ytCount.toLocaleString('en-IN')}</b></div>
+    <div class="stat-chip"><span>Tagged</span><b>${taggedCount.toLocaleString('en-IN')}/${STATE.comments.length.toLocaleString('en-IN')}</b></div>
     <div class="stat-chip"><span>Active</span><b>${activeCount}/${STATE.phones.length}</b></div>
     <div class="stat-chip"><span>YT Covered</span><b>${STATE.fetchStatus ? STATE.fetchStatus.fully_covered : '–'}/${STATE.phones.length}</b></div>
     <div class="stat-chip">
