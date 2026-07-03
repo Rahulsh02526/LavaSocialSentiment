@@ -1,41 +1,23 @@
 // api/cron-youtube-fetch.js
-// GET /api/cron-youtube-fetch  (triggered daily by Vercel Cron, see vercel.json)
-// Also safe to call manually (e.g. a "Fetch Next Batch Now" button in the UI) —
-// it always re-checks today's quota log before doing anything, so manual + cron
-// calls on the same day correctly share the same daily budget.
-//
-// Logic per run:
-//   1. Look at fetch_progress to find models that still need a video mapped (search.list)
-//      or still need comments pulled (commentThreads.list).
-//   2. Respect TWO separate budgets: search.list has its own 100-calls/day cap (Google-side),
-//      and commentThreads.list draws from the shared 10,000-units/day pool. We track our own
-//      usage in `quota_log` since Google does not return remaining quota in responses.
-//   3. Process up to BATCH_SIZE models per run (default 12) — enough to cover all 58 models
-//      in about 5 daily runs, comfortably within "10-15 models a day."
-//   4. For models without a mapped video: search, pick the top result, save to video_map.
-//   5. For models with a mapped video: pull new comments since last fetch (order=time,
-//      stop once we hit a comment older than newest_comment_seen), insert into comments table.
+// Daily cron: maps up to 11 videos per model (1 official + 10 top reviewers),
+// India only (regionCode=IN), ranked by view count.
+// 2 searches per model (official + reviewers) — one-time, ~2 days for all 58 models.
 
 const { getSupabaseClient } = require('../lib/supabase');
 const { verifyToken } = require('../lib/auth');
 
-const BATCH_SIZE = 12;
-const SEARCH_DAILY_CAP = 90;     // leave headroom under Google's hard 100/day search.list cap
-const UNITS_DAILY_CAP = 9000;    // leave headroom under the 10,000 shared pool
+const BATCH_SIZE = 6;
+const SEARCH_DAILY_CAP = 90;
+const UNITS_DAILY_CAP = 9000;
+const MAX_REVIEWER_VIDEOS = 10;
+const REGION = 'IN';
 
 module.exports = async (req, res) => {
-  // Two distinct trigger paths, each with its own auth:
-  //   1. Vercel's own Cron scheduler — identified by user-agent, OR by the CRON_SECRET
-  //      Vercel automatically sends as a Bearer token when CRON_SECRET is set as an env var
-  //      (see https://vercel.com/docs/cron-jobs/manage-cron-jobs — this is Vercel's mechanism,
-  //      separate from our app's own admin/viewer auth).
-  //   2. A manual trigger from the UI — uses the same admin token as every other write action.
   const isVercelCron = req.headers['user-agent'] === 'vercel-cron/1.0'
     || req.headers['authorization'] === `Bearer ${process.env.CRON_SECRET}`;
   const isAdminTrigger = verifyToken(req.headers['x-auth-token'], 'admin');
-
   if (!isVercelCron && !isAdminTrigger) {
-    return res.status(401).json({ error: 'Unauthorized. This endpoint can only be triggered by Vercel Cron or an authenticated admin.' });
+    return res.status(401).json({ error: 'Unauthorized.' });
   }
 
   const ytKey = process.env.YOUTUBE_API_KEY;
@@ -45,166 +27,139 @@ module.exports = async (req, res) => {
     const supabase = getSupabaseClient();
     const today = new Date().toISOString().slice(0, 10);
 
-    // ---- check today's usage so far ----
-    const { data: quotaRows, error: quotaErr } = await supabase
-      .from('quota_log').select('call_type, units_used').eq('log_date', today);
-    if (quotaErr) throw new Error(`Quota log read failed: ${quotaErr.message}`);
-
+    const { data: quotaRows } = await supabase.from('quota_log').select('call_type, units_used').eq('log_date', today);
     let searchCallsToday = 0, unitsToday = 0;
-    quotaRows.forEach(r => {
-      unitsToday += r.units_used;
-      if (r.call_type === 'search.list') searchCallsToday++;
-    });
+    (quotaRows || []).forEach(r => { unitsToday += r.units_used; if (r.call_type === 'search.list') searchCallsToday++; });
 
-    const log = []; // human-readable summary returned in the response
+    const log = [];
 
-    // ---- ensure fetch_progress has a row for every model ----
-    const { data: models, error: modelsErr } = await supabase.from('models').select('model_id, model').order('model_id');
-    if (modelsErr) throw new Error(`Models read failed: ${modelsErr.message}`);
-
+    const { data: models } = await supabase.from('models').select('model_id, model, brand').order('model_id');
     const { data: progressRows } = await supabase.from('fetch_progress').select('*');
     const progressByModel = {};
     (progressRows || []).forEach(p => { progressByModel[p.model_id] = p; });
 
     const missingProgress = models.filter(m => !progressByModel[m.model_id]);
     if (missingProgress.length) {
-      await supabase.from('fetch_progress').insert(
-        missingProgress.map(m => ({ model_id: m.model_id, status: 'pending' }))
-      );
-      missingProgress.forEach(m => { progressByModel[m.model_id] = { model_id: m.model_id, status: 'pending', search_completed: false }; });
+      await supabase.from('fetch_progress').insert(missingProgress.map(m => ({ model_id: m.model_id, status: 'pending' })));
+      missingProgress.forEach(m => { progressByModel[m.model_id] = { model_id: m.model_id, status: 'pending', official_search_done: false, reviewer_search_done: false }; });
     }
 
-    // ---- pick this run's batch: prioritize never-searched models first, then never-fetched ----
-    const needsSearch = models.filter(m => !progressByModel[m.model_id].search_completed && progressByModel[m.model_id].status !== 'no_video_found');
-    const needsCommentsFetch = models.filter(m => progressByModel[m.model_id].search_completed && !progressByModel[m.model_id].comments_fetched_at);
+    const needsSearch = models.filter(m => { const p = progressByModel[m.model_id] || {}; return !p.official_search_done || !p.reviewer_search_done; });
+    const needsComments = models.filter(m => { const p = progressByModel[m.model_id] || {}; return p.official_search_done && p.reviewer_search_done; });
+    const batch = [...needsSearch, ...needsComments].slice(0, BATCH_SIZE);
 
-    const batch = [...needsSearch, ...needsCommentsFetch].slice(0, BATCH_SIZE);
-
-    if (batch.length === 0) {
-      return res.status(200).json({ message: 'All models already have a video mapped and comments fetched. Nothing to do.', log });
-    }
+    if (batch.length === 0) return res.status(200).json({ message: 'All models mapped and up to date.', log });
 
     let processed = 0;
+
     for (const model of batch) {
-      const progress = progressByModel[model.model_id];
+      const progress = progressByModel[model.model_id] || {};
 
-      // ---------- SEARCH (find + map a video) ----------
-      if (!progress.search_completed) {
-        if (searchCallsToday >= SEARCH_DAILY_CAP) {
-          log.push(`Stopped: hit daily search.list cap (${SEARCH_DAILY_CAP}) before mapping "${model.model}".`);
-          break;
-        }
-        const query = encodeURIComponent(`${model.model} review`);
-        const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=5&relevanceLanguage=en&order=relevance&key=${ytKey}`;
-        const searchRes = await fetch(searchUrl);
-        const searchData = await searchRes.json();
-        searchCallsToday++;
+      // OFFICIAL VIDEO SEARCH
+      if (!progress.official_search_done) {
+        if (searchCallsToday >= SEARCH_DAILY_CAP) { log.push(`Search cap reached before "${model.model}"`); break; }
+        const query = encodeURIComponent(`${model.model} official launch video`);
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=5&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&key=${ytKey}`;
+        const r = await fetch(url);
+        const data = await r.json();
+        searchCallsToday++; unitsToday += 100;
         await supabase.from('quota_log').insert({ log_date: today, units_used: 100, call_type: 'search.list', model_id: model.model_id });
-        unitsToday += 100;
 
-        if (searchData.error) {
-          await supabase.from('fetch_progress').update({ status: 'error', error_message: searchData.error.message, updated_at: new Date().toISOString() }).eq('model_id', model.model_id);
-          log.push(`Search failed for "${model.model}": ${searchData.error.message}`);
-          continue;
+        if (!data.error && data.items?.length) {
+          const brand = (model.brand || '').toLowerCase();
+          const sorted = data.items.sort((a, b) => {
+            const aOff = a.snippet.channelTitle.toLowerCase().includes(brand) ? 1 : 0;
+            const bOff = b.snippet.channelTitle.toLowerCase().includes(brand) ? 1 : 0;
+            return bOff - aOff;
+          });
+          const top = sorted[0];
+          await supabase.from('model_videos').upsert({
+            model_id: model.model_id, video_id: top.id.videoId, video_type: 'official',
+            title: top.snippet.title, channel: top.snippet.channelTitle,
+            channel_id: top.snippet.channelId, published_at: top.snippet.publishedAt,
+            mapped_at: new Date().toISOString(),
+          }, { onConflict: 'model_id,video_id' });
+          log.push(`Official: "${model.model}" → "${top.snippet.title}" (${top.snippet.channelTitle})`);
+        } else {
+          log.push(`No official video for "${model.model}"`);
         }
+        await supabase.from('fetch_progress').upsert({ model_id: model.model_id, official_search_done: true, updated_at: new Date().toISOString() }, { onConflict: 'model_id' });
+        progress.official_search_done = true;
+      }
 
-        const items = searchData.items || [];
-        if (items.length === 0) {
-          await supabase.from('fetch_progress').update({ status: 'no_video_found', search_completed: true, search_completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('model_id', model.model_id);
-          log.push(`No video found for "${model.model}".`);
-          continue;
+      // REVIEWER VIDEOS SEARCH
+      if (!progress.reviewer_search_done) {
+        if (searchCallsToday >= SEARCH_DAILY_CAP) { log.push(`Search cap reached at reviewer search for "${model.model}"`); break; }
+        const query = encodeURIComponent(`${model.model} review India`);
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=${MAX_REVIEWER_VIDEOS}&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&key=${ytKey}`;
+        const r = await fetch(url);
+        const data = await r.json();
+        searchCallsToday++; unitsToday += 100;
+        await supabase.from('quota_log').insert({ log_date: today, units_used: 100, call_type: 'search.list', model_id: model.model_id });
+
+        if (!data.error && data.items?.length) {
+          const rows = data.items.map(item => ({
+            model_id: model.model_id, video_id: item.id.videoId, video_type: 'reviewer',
+            title: item.snippet.title, channel: item.snippet.channelTitle,
+            channel_id: item.snippet.channelId, published_at: item.snippet.publishedAt,
+            mapped_at: new Date().toISOString(),
+          }));
+          await supabase.from('model_videos').upsert(rows, { onConflict: 'model_id,video_id' });
+          log.push(`${rows.length} reviewer videos for "${model.model}"`);
         }
-
-        const top = items[0];
-        await supabase.from('video_map').upsert({
-          model_id: model.model_id, video_id: top.id.videoId, title: top.snippet.title,
-          channel: top.snippet.channelTitle, mapped_at: new Date().toISOString(),
-        }, { onConflict: 'model_id' });
-
-        await supabase.from('fetch_progress').update({
-          status: 'searched', search_completed: true, search_completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-        }).eq('model_id', model.model_id);
-
-        log.push(`Mapped "${model.model}" → "${top.snippet.title}" (${top.snippet.channelTitle}).`);
+        await supabase.from('fetch_progress').upsert({ model_id: model.model_id, reviewer_search_done: true, status: 'searched', updated_at: new Date().toISOString() }, { onConflict: 'model_id' });
+        progress.reviewer_search_done = true;
         processed++;
-        progress.search_completed = true; // so the comments-fetch step below can run in the same pass if budget allows
       }
 
-      // ---------- FETCH COMMENTS (for newly or previously mapped videos) ----------
-      if (unitsToday >= UNITS_DAILY_CAP) {
-        log.push(`Stopped: approaching daily unit cap (${UNITS_DAILY_CAP}) before fetching comments for "${model.model}".`);
-        break;
+      // FETCH COMMENTS
+      if (progress.official_search_done && progress.reviewer_search_done) {
+        if (unitsToday >= UNITS_DAILY_CAP) { log.push(`Unit cap reached, skipping comments for "${model.model}"`); break; }
+        const { data: videos } = await supabase.from('model_videos').select('*').eq('model_id', model.model_id);
+        if (!videos?.length) continue;
+
+        let newTotal = 0;
+        for (const video of videos) {
+          if (unitsToday >= UNITS_DAILY_CAP) break;
+          const cr = await fetch(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${video.video_id}&maxResults=100&order=time&textFormat=plainText&key=${ytKey}`);
+          const cd = await cr.json();
+          unitsToday += 1;
+          await supabase.from('quota_log').insert({ log_date: today, units_used: 1, call_type: 'commentThreads.list', model_id: model.model_id });
+          if (cd.error) continue;
+
+          const newestSeen = video.newest_comment_seen ? new Date(video.newest_comment_seen) : null;
+          let newestInBatch = newestSeen;
+          const rows = [];
+          for (const item of (cd.items || [])) {
+            const publishedAt = item.snippet.topLevelComment.snippet.publishedAt;
+            const commentTime = new Date(publishedAt);
+            if (newestSeen && commentTime <= newestSeen) continue;
+            if (!newestInBatch || commentTime > newestInBatch) newestInBatch = commentTime;
+            const text = item.snippet.topLevelComment.snippet.textDisplay;
+            rows.push({ id: `YouTube_${model.model_id}_${hashText(text)}`, model_id: model.model_id, source: 'YouTube', comment_text: text, comment_date: publishedAt.slice(0, 10) });
+          }
+          if (rows.length) {
+            await supabase.from('comments').upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+            newTotal += rows.length;
+          }
+          await supabase.from('model_videos').update({ last_fetched_at: new Date().toISOString(), newest_comment_seen: newestInBatch ? newestInBatch.toISOString() : video.newest_comment_seen }).eq('id', video.id);
+        }
+
+        await supabase.from('fetch_progress').upsert({ model_id: model.model_id, status: 'fetched', comments_fetched_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { onConflict: 'model_id' });
+        if (newTotal > 0) log.push(`${newTotal} new YT comments for "${model.model}"`);
+        processed++;
       }
-
-      const { data: videoMapRow } = await supabase.from('video_map').select('*').eq('model_id', model.model_id).single();
-      if (!videoMapRow) continue; // no_video_found case from above
-
-      const commentsUrl = `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${videoMapRow.video_id}&maxResults=100&order=time&textFormat=plainText&key=${ytKey}`;
-      const commentsRes = await fetch(commentsUrl);
-      const commentsData = await commentsRes.json();
-      await supabase.from('quota_log').insert({ log_date: today, units_used: 1, call_type: 'commentThreads.list', model_id: model.model_id });
-      unitsToday += 1;
-
-      if (commentsData.error) {
-        const reason = commentsData.error.errors?.[0]?.reason;
-        await supabase.from('fetch_progress').update({ status: 'error', error_message: commentsData.error.message, updated_at: new Date().toISOString() }).eq('model_id', model.model_id);
-        log.push(`Comment fetch failed for "${model.model}": ${commentsData.error.message}${reason === 'commentsDisabled' ? ' (comments disabled on this video)' : ''}`);
-        continue;
-      }
-
-      const items = commentsData.items || [];
-      const newestSeen = videoMapRow.newest_comment_seen ? new Date(videoMapRow.newest_comment_seen) : null;
-      let newestInBatch = newestSeen;
-      const rowsToInsert = [];
-
-      for (const item of items) {
-        const publishedAt = item.snippet.topLevelComment.snippet.publishedAt;
-        const commentTime = new Date(publishedAt);
-        if (newestSeen && commentTime <= newestSeen) continue; // already fetched in a prior run
-        if (!newestInBatch || commentTime > newestInBatch) newestInBatch = commentTime;
-
-        const text = item.snippet.topLevelComment.snippet.textDisplay;
-        rowsToInsert.push({
-          id: `YouTube_${model.model_id}_${hashText(text)}`,
-          model_id: model.model_id, source: 'YouTube', comment_text: text,
-          comment_date: publishedAt.slice(0, 10),
-        });
-      }
-
-      if (rowsToInsert.length) {
-        await supabase.from('comments').upsert(rowsToInsert, { onConflict: 'id', ignoreDuplicates: true });
-      }
-
-      await supabase.from('video_map').update({
-        last_fetched_at: new Date().toISOString(),
-        newest_comment_seen: newestInBatch ? newestInBatch.toISOString() : videoMapRow.newest_comment_seen,
-      }).eq('model_id', model.model_id);
-
-      await supabase.from('fetch_progress').update({
-        status: 'fetched', comments_fetched_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      }).eq('model_id', model.model_id);
-
-      log.push(`Fetched comments for "${model.model}": ${items.length} returned, ${rowsToInsert.length} new.`);
-      processed++;
     }
 
-    res.status(200).json({
-      message: `Processed ${processed} model(s) this run.`,
-      search_calls_used_today: searchCallsToday,
-      units_used_today: unitsToday,
-      log,
-    });
+    res.status(200).json({ message: `Processed ${processed} model(s).`, search_calls_today: searchCallsToday, units_today: unitsToday, log });
   } catch (e) {
-    console.error('GET /api/cron-youtube-fetch failed:', e);
+    console.error('cron failed:', e);
     res.status(500).json({ error: e.message });
   }
 };
 
-// must match the frontend's hashText exactly so comment ids stay consistent
 function hashText(str) {
   let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = (h * 31 + str.charCodeAt(i)) | 0;
-  }
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
   return 'h' + (h >>> 0).toString(36);
 }
