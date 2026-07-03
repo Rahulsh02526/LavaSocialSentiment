@@ -70,18 +70,34 @@ function renderModelDeepDiveBody() {
       <div class="kpi"><div class="kpi-label">Comments</div><div class="kpi-value">${comments.length}</div><div class="kpi-sub">${inWindowComments.length} in-window · ${tagged.length} tagged</div></div>
     </div>
 
-    ${spec ? `
+    ${spec || phone.image_url ? `
     <div class="panel">
-      <div class="panel-title">Full Specifications</div>
-      <div class="grid-4">
-        <div><label>RAM</label><div style="font-size:13px;">${(spec.ram_variants||[]).join(' / ')}</div></div>
-        <div><label>Storage</label><div style="font-size:13px;">${(spec.storage_variants||[]).join(' / ')}</div></div>
-        <div><label>Display</label><div style="font-size:13px;">${spec.display||'–'}</div></div>
-        <div><label>Battery</label><div style="font-size:13px;">${spec.battery_mah?spec.battery_mah+' mAh':'–'}${spec.fast_charging_w?', '+spec.fast_charging_w+'W charging':''}</div></div>
-        <div><label>Rear Camera</label><div style="font-size:13px;">${spec.rear_camera||'–'}</div></div>
-        <div><label>Front Camera</label><div style="font-size:13px;">${spec.front_camera||'–'}</div></div>
-        <div><label>OS</label><div style="font-size:13px;">${spec.os||'–'}</div></div>
-        <div><label>Weight</label><div style="font-size:13px;">${spec.weight_g?spec.weight_g+'g':'–'}</div></div>
+      <div style="display:flex; gap:24px; align-items:flex-start;">
+        ${phone.image_url ? `
+        <div style="flex-shrink:0; text-align:center;">
+          <img src="${escapeHtml(phone.image_url)}"
+            alt="${escapeHtml(phone.model)}"
+            style="width:180px; height:260px; object-fit:contain; border-radius:8px; background:var(--panel-2); padding:12px;"
+            onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+          <div style="display:none; width:180px; height:260px; background:var(--panel-2); border-radius:8px; align-items:center; justify-content:center; color:var(--text-faint); font-size:12px; flex-direction:column; gap:6px;">
+            <span style="font-size:32px;">📱</span>
+            <span>No image</span>
+          </div>
+        </div>` : ''}
+        ${spec ? `
+        <div style="flex:1;">
+          <div class="panel-title">Full Specifications</div>
+          <div class="grid-4">
+            <div><label>RAM</label><div style="font-size:13px;">${(spec.ram_variants||[]).join(' / ')}</div></div>
+            <div><label>Storage</label><div style="font-size:13px;">${(spec.storage_variants||[]).join(' / ')}</div></div>
+            <div><label>Display</label><div style="font-size:13px;">${spec.display||'–'}</div></div>
+            <div><label>Battery</label><div style="font-size:13px;">${spec.battery_mah?spec.battery_mah+' mAh':'–'}${spec.fast_charging_w?', '+spec.fast_charging_w+'W charging':''}</div></div>
+            <div><label>Rear Camera</label><div style="font-size:13px;">${spec.rear_camera||'–'}</div></div>
+            <div><label>Front Camera</label><div style="font-size:13px;">${spec.front_camera||'–'}</div></div>
+            <div><label>OS</label><div style="font-size:13px;">${spec.os||'–'}</div></div>
+            <div><label>Weight</label><div style="font-size:13px;">${spec.weight_g?spec.weight_g+'g':'–'}</div></div>
+          </div>
+        </div>` : ''}
       </div>
     </div>` : ''}
 
