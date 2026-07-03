@@ -107,7 +107,7 @@ function renderMatrixTable() {
                   const color = cell.positivity === null ? 'var(--text-faint)' : cell.positivity >= 65 ? 'var(--pos)' : cell.positivity >= 40 ? 'var(--neu)' : 'var(--neg)';
                   return `<td class="num">
                     <div style="font-family:var(--mono); font-size:12px; color:${color}; font-weight:600;">${cell.positivity===null?'–':cell.positivity+'%'}</div>
-                    <div style="font-size:10px; color:var(--text-faint);">${cell.intensity}% mention</div>
+                    <div style="font-size:10px; color:var(--text-faint);">${cell.n} mention${cell.n===1?'':'s'}</div>
                   </td>`;
                 }).join('')}
               </tr>
@@ -115,7 +115,7 @@ function renderMatrixTable() {
           </tbody>
         </table>
       </div>
-      <div style="margin-top:10px; font-size:11px; color:var(--text-faint);">Top number = positivity % (green ≥65%, amber 40-64%, red &lt;40%) · bottom = intensity % (share of tagged comments mentioning this parameter)</div>
+      <div style="margin-top:10px; font-size:11px; color:var(--text-faint);">Positivity % (green ≥65%, amber 40-64%, red &lt;40%) · count = actual mentions tagged (not % of comments) — a 75% from 2 mentions ≠ 75% from 238 mentions</div>
     </div>
   `;
 }
