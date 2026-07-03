@@ -5,6 +5,7 @@
 // ============================================================
 
 let matrixSegmentFilter = 'all';
+let matrixSourceFilter = 'all';
 
 function renderMatrixView() {
   const el = document.getElementById('view-matrix');
@@ -17,10 +18,16 @@ function renderMatrixView() {
     </div>
 
     <div class="panel" style="margin-bottom:14px;">
-      <div class="panel-title">Segment</div>
-      <div class="pill-row">
+      <div class="panel-title" style="margin-bottom:8px;">Segment</div>
+      <div class="pill-row" style="margin-bottom:14px;">
         <span class="pill ${matrixSegmentFilter==='all'?'active':''}" onclick="setMatrixSegment('all')">All</span>
         ${Object.entries(PRICE_SEGMENT_LABELS).map(([k,v]) => `<span class="pill ${matrixSegmentFilter===k?'active':''}" onclick="setMatrixSegment('${k}')">${v}</span>`).join('')}
+      </div>
+      <div class="panel-title" style="margin-bottom:8px;">Source</div>
+      <div class="pill-row">
+        <span class="pill ${matrixSourceFilter==='all'?'active':''}" onclick="setMatrixSource('all')">All Sources</span>
+        <span class="pill ${matrixSourceFilter==='ecom'?'active':''}" onclick="setMatrixSource('ecom')">E-com Only (Amazon + Flipkart)</span>
+        <span class="pill ${matrixSourceFilter==='youtube'?'active':''}" onclick="setMatrixSource('youtube')">YouTube Only</span>
       </div>
     </div>
 
@@ -34,33 +41,38 @@ function setMatrixSegment(seg) {
   renderMatrixTable();
 }
 
+function setMatrixSource(src) {
+  matrixSourceFilter = src;
+  renderMatrixTable();
+}
+
 function renderMatrixTable() {
   const box = document.getElementById('matrixTableBox');
   let models = STATE.phones.filter(p => getLifecycleStatus(p) !== 'frozen');
   if (matrixSegmentFilter !== 'all') models = models.filter(p => p.price_segment === matrixSegmentFilter);
-
   if (models.length === 0) {
     box.innerHTML = `<div class="empty-state"><div class="title">No active/semi-active models in this segment</div></div>`;
     return;
   }
 
-  // cap to a reasonable column count for readability
   const shownModels = models.slice(0, 12);
   const overflow = models.length - shownModels.length;
 
-  // compute intensity/positivity per model x parameter
-  const cellData = {}; // `${modelId}_${param}` -> {intensity, positivity, n}
+  // source filter helper
+  function sourceMatch(c) {
+    if (matrixSourceFilter === 'ecom') return c.source === 'Amazon' || c.source === 'Flipkart';
+    if (matrixSourceFilter === 'youtube') return c.source === 'YouTube';
+    return true;
+  }
+
+  const cellData = {};
   shownModels.forEach(p => {
-    const tagged = STATE.comments.filter(c => c.model_id === p.model_id && c.tag && isWithinWindow(p, c.comment_date));
+    const tagged = STATE.comments.filter(c => c.model_id === p.model_id && c.tag && isWithinWindow(p, c.comment_date) && sourceMatch(c));
     const total = tagged.length;
     PARAMS.forEach(param => {
       let mentionCount = 0, pos = 0, neg = 0;
       tagged.forEach(c => (c.tag.mentions||[]).forEach(m => {
-        if (m.parameter === param) {
-          mentionCount++;
-          if (m.sentiment === 'positive') pos++;
-          else if (m.sentiment === 'negative') neg++;
-        }
+        if (m.parameter === param) { mentionCount++; if (m.sentiment === 'positive') pos++; else if (m.sentiment === 'negative') neg++; }
       }));
       const intensity = total > 0 ? Math.round((mentionCount/total)*100) : 0;
       const positivity = (pos+neg) > 0 ? Math.round((pos/(pos+neg))*100) : null;
@@ -68,12 +80,14 @@ function renderMatrixTable() {
     });
   });
 
-  // only show params that have at least one mention somewhere in this view
   const activeParams = PARAMS.filter(param => shownModels.some(p => cellData[`${p.model_id}_${param}`].n > 0));
+
+  const sourceLabelMap = { all: 'All Sources', ecom: 'E-com Only', youtube: 'YouTube Only' };
 
   box.innerHTML = `
     ${overflow > 0 ? `<div class="notice warn">Showing first 12 of ${models.length} matching models. Narrow by segment to see others.</div>` : ''}
     <div class="panel">
+      <div style="font-size:11px; color:var(--text-faint); margin-bottom:10px;">Showing: <b style="color:var(--text);">${sourceLabelMap[matrixSourceFilter]}</b></div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -105,3 +119,4 @@ function renderMatrixTable() {
     </div>
   `;
 }
+
