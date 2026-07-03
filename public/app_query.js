@@ -158,11 +158,28 @@ function buildQueryResultsHtml() {
       ${queryMatchedModels.length === 0 ? `<div class="empty-state" style="padding:20px;"><div class="desc">No models match these filters</div></div>` : `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Model</th><th>Price</th><th>Segment</th><th>Network</th><th>Battery</th><th>Processor</th>${queryFocusParameter ? `<th>${PARAM_LABELS[queryFocusParameter]}</th>` : '<th>Sentiment (tagged)</th>'}<th>Assets</th></tr></thead>
+          <thead><tr><th>Model</th><th>Price</th><th>Segment</th><th>Network</th><th>Battery</th><th>Processor</th><th>Comments</th>${queryFocusParameter ? `<th>${PARAM_LABELS[queryFocusParameter]}</th>` : '<th>Sentiment</th>'}<th>Assets</th></tr></thead>
           <tbody>
             ${queryMatchedModels.map(p => {
               const spec = STATE.specs[p.model_id] || (p._summary ? { connectivity: p._summary.connectivity, battery_mah: p._summary.battery_mah, processor: p._summary.processor } : {});
               const assets = p.model_id ? getAssetsForModel(p.model_id) : (p._summary?.marketing_assets || []);
+
+              // comment count breakdown by source
+              let commentsCell = '–';
+              if (p.model_id) {
+                const allComments = STATE.comments.filter(c => c.model_id === p.model_id);
+                const ecomCount = allComments.filter(c => c.source === 'Amazon' || c.source === 'Flipkart').length;
+                const ytCount = allComments.filter(c => c.source === 'YouTube').length;
+                const taggedCount = allComments.filter(c => c.tag).length;
+                commentsCell = `<div style="font-size:11px; line-height:1.6;">
+                  ${ecomCount > 0 ? `<span style="color:var(--text-dim);">E-com: ${ecomCount}</span><br>` : ''}
+                  ${ytCount > 0 ? `<span style="color:var(--neg);">YT: ${ytCount}</span><br>` : ''}
+                  <span style="color:var(--text-faint);">Tagged: ${taggedCount}</span>
+                </div>`;
+              } else if (p._summary) {
+                commentsCell = `<span style="font-size:11px; color:var(--text-faint);">${p._summary.tagged_comment_count} tagged</span>`;
+              }
+
               let sentCell;
               if (p._summary) {
                 if (queryFocusParameter && p._summary.parameter_sentiment?.[queryFocusParameter]) {
@@ -185,6 +202,7 @@ function buildQueryResultsHtml() {
                 <td>${isFiveG(spec) ? '<span class="badge pos">5G</span>' : '<span class="badge gray">4G</span>'}</td>
                 <td class="num">${spec.battery_mah ? spec.battery_mah+' mAh' : '–'}</td>
                 <td style="font-size:12px;">${spec.processor || '–'}</td>
+                <td>${commentsCell}</td>
                 <td>${sentCell}</td>
                 <td>${assets.length ? `<span class="badge gray" ${p.model_id?`style="cursor:pointer;" onclick="goToModel(${p.model_id})"`:''}>${assets.length} ↗</span>` : '<span style="color:var(--text-faint); font-size:11px;">none</span>'}</td>
               </tr>`;
