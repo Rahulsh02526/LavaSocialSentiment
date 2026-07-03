@@ -37,10 +37,18 @@ function renderModelDeepDiveBody() {
   const comments = STATE.comments.filter(c => c.model_id === phone.model_id);
   const inWindowComments = comments.filter(c => isWithinWindow(phone, c.comment_date));
   const tagged = inWindowComments.filter(c => c.tag);
+  const taggedEcom = tagged.filter(c => c.source === 'Amazon' || c.source === 'Flipkart');
+  const taggedYT = tagged.filter(c => c.source === 'YouTube');
   const status = getLifecycleStatus(phone);
 
-  const sentCounts = { positive:0, negative:0, mixed:0, neutral:0 };
-  tagged.forEach(c => { const s=(c.tag.sentiment||'neutral').toLowerCase(); if(sentCounts[s]!==undefined) sentCounts[s]++; else sentCounts.neutral++; });
+  function sentCount(arr) {
+    const s = { positive:0, negative:0, mixed:0, neutral:0 };
+    arr.forEach(c => { const v=(c.tag.sentiment||'neutral').toLowerCase(); if(s[v]!==undefined) s[v]++; else s.neutral++; });
+    return s;
+  }
+  const sentCounts = sentCount(tagged);
+  const sentCountsEcom = sentCount(taggedEcom);
+  const sentCountsYT = sentCount(taggedYT);
 
   const paramAgg = {};
   PARAMS.forEach(p => paramAgg[p] = { pos:0, neg:0, mixed:0, n:0 });
@@ -60,14 +68,16 @@ function renderModelDeepDiveBody() {
   tagged.forEach(c => { if (c.tag.strategic_theme) themeCounts[c.tag.strategic_theme] = (themeCounts[c.tag.strategic_theme]||0)+1; });
   const untaggedThemeCount = tagged.filter(c => !c.tag.strategic_theme).length;
 
-  const videoMapping = STATE.videoMap[phone.model_id];
+  const videoMappings = STATE.videoMap[phone.model_id] || [];
+  const officialVideo = Array.isArray(videoMappings) ? videoMappings.find(v => v.videoType === 'official') : null;
+  const reviewerVideoCount = Array.isArray(videoMappings) ? videoMappings.filter(v => v.videoType === 'reviewer').length : 0;
 
   body.innerHTML = `
     <div class="grid-4" style="margin-bottom:18px;">
       <div class="kpi"><div class="kpi-label">Launch Price</div><div class="kpi-value">${phone.launch_price_inr ? '₹'+Math.round(phone.launch_price_inr).toLocaleString('en-IN') : '–'}</div><div class="kpi-sub">${phone.launch_date||''} · ${PRICE_SEGMENT_LABELS[phone.price_segment]||phone.price_segment||''}</div></div>
       <div class="kpi"><div class="kpi-label">Lifecycle Status</div><div class="kpi-value" style="font-size:16px;">${lifecycleBadge(status)}</div><div class="kpi-sub">sentiment freeze: ${phone.sentiment_frozen_at||'–'} · price freeze: ${phone.price_frozen_at||'–'}</div></div>
       <div class="kpi"><div class="kpi-label">Brand / Tier</div><div class="kpi-value" style="font-size:16px; text-transform:capitalize;">${phone.brand||'–'}</div><div class="kpi-sub">${phone.brand_tier ? 'Tier '+phone.brand_tier : 'Ad-hoc / untiered'}</div></div>
-      <div class="kpi"><div class="kpi-label">Comments</div><div class="kpi-value">${comments.length}</div><div class="kpi-sub">${inWindowComments.length} in-window · ${tagged.length} tagged</div></div>
+      <div class="kpi"><div class="kpi-label">Comments</div><div class="kpi-value">${comments.length}</div><div class="kpi-sub">E-com: ${taggedEcom.length} tagged · YT: ${taggedYT.length} tagged</div></div>
     </div>
 
     ${spec || phone.image_url ? `
@@ -109,23 +119,51 @@ function renderModelDeepDiveBody() {
     ${status === 'frozen' ? `<div class="notice warn">This model's sentiment and price tracking are both frozen (past 12 months). Data shown is preserved for historical/temporal analysis only.</div>` :
       status === 'semi_active' ? `<div class="notice warn">Sentiment tracking is frozen for this model (past 6 months) — only price updates continue. Comment data below reflects what was captured before the freeze.</div>` : ''}
 
-    ${videoMapping ? `
+    ${videoMappings.length > 0 ? `
     <div class="notice">
-      YouTube review mapped: <b>${escapeHtml(videoMapping.title)}</b> (${escapeHtml(videoMapping.channel)}) — <a href="https://youtube.com/watch?v=${videoMapping.videoId}" target="_blank">view ↗</a>
+      ${officialVideo ? `Official: <b>${escapeHtml(officialVideo.title)}</b> (${escapeHtml(officialVideo.channel)}) — <a href="https://youtube.com/watch?v=${officialVideo.videoId}" target="_blank">view ↗</a> · ` : 'No official video · '}
+      ${reviewerVideoCount} reviewer video${reviewerVideoCount===1?'':'s'} mapped
     </div>` : `
-    <div class="notice warn">No YouTube video mapped for this model yet. Go to the YouTube tab to search and map one.</div>
+    <div class="notice warn">No YouTube videos mapped for this model yet. Go to the YouTube tab to run a fetch.</div>
     `}
 
     <div class="grid-3">
       <div class="panel">
-        <div class="panel-title">Sentiment (In-Window, Tagged)</div>
-        ${tagged.length===0 ? `<div class="empty-state" style="padding:14px;"><div class="desc">No tagged comments for this model yet</div></div>` : `
-        <div style="display:flex; flex-direction:column; gap:10px;">
-          ${renderSentBar('Positive', sentCounts.positive, tagged.length, 'pos')}
-          ${renderSentBar('Negative', sentCounts.negative, tagged.length, 'neg')}
-          ${renderSentBar('Mixed', sentCounts.mixed, tagged.length, 'neu')}
-          ${renderSentBar('Neutral', sentCounts.neutral, tagged.length, 'gray')}
-        </div>`}
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <div class="panel-title" style="margin:0;">Sentiment</div>
+          <div style="display:flex; gap:4px;">
+            <span class="pill active" id="sentTab_all" onclick="setSentTab('all',${phone.model_id})" style="font-size:10px; padding:2px 8px;">All (${tagged.length})</span>
+            <span class="pill" id="sentTab_ecom" onclick="setSentTab('ecom',${phone.model_id})" style="font-size:10px; padding:2px 8px;">E-com (${taggedEcom.length})</span>
+            <span class="pill" id="sentTab_yt" onclick="setSentTab('yt',${phone.model_id})" style="font-size:10px; padding:2px 8px;">YT (${taggedYT.length})</span>
+          </div>
+        </div>
+        <div id="sentPanel_all">
+          ${tagged.length===0 ? `<div class="empty-state" style="padding:14px;"><div class="desc">No tagged comments yet</div></div>` : `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${renderSentBar('Positive', sentCounts.positive, tagged.length, 'pos')}
+            ${renderSentBar('Negative', sentCounts.negative, tagged.length, 'neg')}
+            ${renderSentBar('Mixed', sentCounts.mixed, tagged.length, 'neu')}
+            ${renderSentBar('Neutral', sentCounts.neutral, tagged.length, 'gray')}
+          </div>`}
+        </div>
+        <div id="sentPanel_ecom" style="display:none;">
+          ${taggedEcom.length===0 ? `<div style="font-size:12px; color:var(--text-faint); padding:10px 0;">No tagged E-com comments for this model</div>` : `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${renderSentBar('Positive', sentCountsEcom.positive, taggedEcom.length, 'pos')}
+            ${renderSentBar('Negative', sentCountsEcom.negative, taggedEcom.length, 'neg')}
+            ${renderSentBar('Mixed', sentCountsEcom.mixed, taggedEcom.length, 'neu')}
+            ${renderSentBar('Neutral', sentCountsEcom.neutral, taggedEcom.length, 'gray')}
+          </div>`}
+        </div>
+        <div id="sentPanel_yt" style="display:none;">
+          ${taggedYT.length===0 ? `<div style="font-size:12px; color:var(--text-faint); padding:10px 0;">No tagged YouTube comments for this model</div>` : `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${renderSentBar('Positive', sentCountsYT.positive, taggedYT.length, 'pos')}
+            ${renderSentBar('Negative', sentCountsYT.negative, taggedYT.length, 'neg')}
+            ${renderSentBar('Mixed', sentCountsYT.mixed, taggedYT.length, 'neu')}
+            ${renderSentBar('Neutral', sentCountsYT.neutral, taggedYT.length, 'gray')}
+          </div>`}
+        </div>
       </div>
 
       <div class="panel">
@@ -305,4 +343,13 @@ async function removeMarketingAsset(modelId, assetId) {
   } catch (e) {
     alert('Failed to remove asset: ' + e.message);
   }
+}
+
+function setSentTab(tab, modelId) {
+  ['all','ecom','yt'].forEach(t => {
+    const panel = document.getElementById('sentPanel_' + t);
+    const btn = document.getElementById('sentTab_' + t);
+    if (panel) panel.style.display = t === tab ? 'block' : 'none';
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
 }
