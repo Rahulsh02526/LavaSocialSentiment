@@ -107,45 +107,72 @@ function renderYtMappedList() {
     box.innerHTML = `<div class="empty-state"><div class="title">No models mapped yet</div><div class="desc">Run a fetch batch (manually or wait for the daily cron) to start mapping videos.</div></div>`;
     return;
   }
-  box.innerHTML = entries.map(([modelId, videos]) => {
-    const phone = STATE.phones.find(p => p.model_id == modelId);
-    const ytCommentCount = STATE.comments.filter(c => c.model_id == modelId && c.source === 'YouTube').length;
-    // videos is now an array — find official video if exists
-    const officialVideo = Array.isArray(videos) ? videos.find(v => v.videoType === 'official') : null;
-    const reviewerVideos = Array.isArray(videos) ? videos.filter(v => v.videoType === 'reviewer') : [];
-    const totalVideos = Array.isArray(videos) ? videos.length : 0;
 
-    return `
-      <div class="model-card" style="margin-bottom:8px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-          <div>
-            <div class="model-card-name">${phone ? phone.model : modelId}</div>
-            <div class="model-card-meta">${totalVideos} video${totalVideos===1?'':'s'} mapped · ${ytCommentCount} YT comments pulled</div>
-          </div>
-          <span class="badge gray">${totalVideos} videos</span>
-        </div>
-        ${officialVideo ? `
-        <div style="margin-top:8px; padding:6px 10px; background:var(--panel-2); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <span style="font-size:10px; color:var(--pos); font-weight:600; margin-right:6px;">OFFICIAL</span>
-            <span style="font-size:12px;">${escapeHtml(officialVideo.title||'')}</span>
-            <span style="font-size:11px; color:var(--text-faint);"> · ${escapeHtml(officialVideo.channel||'')}</span>
-          </div>
-          <a href="https://youtube.com/watch?v=${officialVideo.videoId}" target="_blank" style="font-size:11px; flex-shrink:0; margin-left:10px;">View ↗</a>
-        </div>` : ''}
-        ${reviewerVideos.length ? `
-        <div style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">
-          ${reviewerVideos.map(v => `
-          <div style="padding:4px 10px; background:var(--panel-2); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
-            <div>
-              <span style="font-size:10px; color:var(--text-faint); font-weight:600; margin-right:6px;">REVIEWER</span>
-              <span style="font-size:11px;">${escapeHtml(v.title||'')}</span>
-              <span style="font-size:11px; color:var(--text-faint);"> · ${escapeHtml(v.channel||'')}</span>
+  const totalMapped = entries.length;
+  const totalYtComments = STATE.comments.filter(c => c.source === 'YouTube').length;
+
+  box.innerHTML = `
+    <div style="font-size:12px; color:var(--text-faint); margin-bottom:12px;">
+      ${totalMapped} models mapped · ${totalYtComments.toLocaleString('en-IN')} total YT comments · Click any model to expand videos
+    </div>
+    ${entries.map(([modelId, videos]) => {
+      const phone = STATE.phones.find(p => p.model_id == modelId);
+      const ytCommentCount = STATE.comments.filter(c => c.model_id == modelId && c.source === 'YouTube').length;
+      const officialVideo = Array.isArray(videos) ? videos.find(v => v.videoType === 'official') : null;
+      const reviewerVideos = Array.isArray(videos) ? videos.filter(v => v.videoType === 'reviewer') : [];
+      const totalVideos = Array.isArray(videos) ? videos.length : 0;
+      const hasOfficial = !!officialVideo;
+      const uid = 'ytm_' + modelId;
+
+      return `
+        <div style="border:1px solid var(--border); border-radius:6px; margin-bottom:6px; overflow:hidden;">
+          <div onclick="toggleYtModel('${uid}')"
+            style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; cursor:pointer; background:var(--panel);">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span id="${uid}_arrow" style="color:var(--text-faint); font-size:11px; transition:transform 0.15s;">▶</span>
+              <div>
+                <div style="font-weight:600; font-size:13px;">${phone ? phone.model : modelId}</div>
+                <div style="font-size:11px; color:var(--text-faint); margin-top:2px;">
+                  ${totalVideos} video${totalVideos===1?'':'s'}
+                  ${hasOfficial ? '<span style="color:var(--pos); margin-left:6px;">✓ official</span>' : '<span style="color:var(--text-faint); margin-left:6px;">no official</span>'}
+                  · ${ytCommentCount.toLocaleString('en-IN')} YT comments
+                </div>
+              </div>
             </div>
-            <a href="https://youtube.com/watch?v=${v.videoId}" target="_blank" style="font-size:11px; flex-shrink:0; margin-left:10px;">View ↗</a>
-          </div>`).join('')}
-        </div>` : ''}
-      </div>
-    `;
-  }).join('');
+            <span class="badge gray">${totalVideos}</span>
+          </div>
+          <div id="${uid}_content" style="display:none; padding:8px 14px 10px; background:var(--panel-2); border-top:1px solid var(--border);">
+            ${officialVideo ? `
+            <div style="padding:6px 10px; background:var(--panel); border-radius:4px; display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; border-left:3px solid var(--pos);">
+              <div>
+                <span style="font-size:10px; color:var(--pos); font-weight:700; margin-right:6px;">OFFICIAL</span>
+                <span style="font-size:12px;">${escapeHtml(officialVideo.title||'')}</span>
+                <span style="font-size:11px; color:var(--text-faint);"> · ${escapeHtml(officialVideo.channel||'')}</span>
+              </div>
+              <a href="https://youtube.com/watch?v=${officialVideo.videoId}" target="_blank" style="font-size:11px; flex-shrink:0; margin-left:10px; color:var(--accent);">View ↗</a>
+            </div>` : `
+            <div style="padding:6px 10px; font-size:11px; color:var(--text-faint); margin-bottom:6px; font-style:italic;">No official brand video found for this model</div>`}
+            ${reviewerVideos.map((v, i) => `
+            <div style="padding:5px 10px; border-radius:4px; display:flex; justify-content:space-between; align-items:center; ${i < reviewerVideos.length-1 ? 'border-bottom:1px solid var(--border);' : ''}">
+              <div style="flex:1; min-width:0;">
+                <span style="font-size:10px; color:var(--text-faint); font-weight:600; margin-right:6px;">REVIEWER</span>
+                <span style="font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(v.title||'')}</span>
+                <span style="font-size:11px; color:var(--text-faint);"> · ${escapeHtml(v.channel||'')}</span>
+              </div>
+              <a href="https://youtube.com/watch?v=${v.videoId}" target="_blank" style="font-size:11px; flex-shrink:0; margin-left:10px; color:var(--accent);">View ↗</a>
+            </div>`).join('')}
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+function toggleYtModel(uid) {
+  const content = document.getElementById(uid + '_content');
+  const arrow = document.getElementById(uid + '_arrow');
+  if (!content) return;
+  const isOpen = content.style.display !== 'none';
+  content.style.display = isOpen ? 'none' : 'block';
+  if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
 }
