@@ -135,7 +135,7 @@ function renderYtMappedList() {
         </div>` : ''}
         ${reviewerVideos.length ? `
         <div style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">
-          ${reviewerVideos.slice(0,3).map(v => `
+          ${reviewerVideos.map(v => `
           <div style="padding:4px 10px; background:var(--panel-2); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
             <div>
               <span style="font-size:10px; color:var(--text-faint); font-weight:600; margin-right:6px;">REVIEWER</span>
@@ -144,7 +144,6 @@ function renderYtMappedList() {
             </div>
             <a href="https://youtube.com/watch?v=${v.videoId}" target="_blank" style="font-size:11px; flex-shrink:0; margin-left:10px;">View ↗</a>
           </div>`).join('')}
-          ${reviewerVideos.length > 3 ? `<div style="font-size:11px; color:var(--text-faint); padding-left:10px;">+${reviewerVideos.length - 3} more reviewer videos</div>` : ''}
         </div>` : ''}
       </div>
     `;
