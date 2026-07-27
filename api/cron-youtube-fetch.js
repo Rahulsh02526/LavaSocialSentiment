@@ -34,7 +34,7 @@ module.exports = async (req, res) => {
     if (unitsToday >= 9000) return res.status(200).json({ message: 'Unit quota reached for today. Will resume tomorrow.', unitsToday });
 
     // get all models and their progress
-    const { data: models } = await supabase.from('models').select('model_id, model, brand').order('model_id');
+    const { data: models } = await supabase.from('models').select('model_id, model, brand, launch_date').order('model_id');
     const { data: progressRows } = await supabase.from('fetch_progress').select('*');
     const progress = {};
     (progressRows || []).forEach(p => { progress[p.model_id] = p; });
@@ -50,10 +50,15 @@ module.exports = async (req, res) => {
     for (const model of models) {
       const p = progress[model.model_id] || {};
 
+      // compute once per model — used by both official and reviewer search
+      const publishedAfter = model.launch_date
+        ? new Date(new Date(model.launch_date).getTime() - 3 * 24 * 60 * 60 * 1000).toISOString()
+        : new Date('2025-01-01').toISOString();
+
       // Priority 1: official video search not done yet
       if (!p.official_search_done) {
-        const query = encodeURIComponent(`${model.model} official launch video`);
-        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=5&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&key=${ytKey}`;
+        const query = encodeURIComponent(`"${model.model}" official launch`);
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=5&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&videoDuration=medium&publishedAfter=${publishedAfter}&key=${ytKey}`;
         const r = await fetch(url);
         const data = await r.json();
         await supabase.from('quota_log').insert({ log_date: today, units_used: 100, call_type: 'search.list', model_id: model.model_id });
@@ -79,8 +84,8 @@ module.exports = async (req, res) => {
 
       // Priority 2: reviewer videos search not done yet
       if (!p.reviewer_search_done) {
-        const query = encodeURIComponent(`${model.model} review India`);
-        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=${MAX_REVIEWER_VIDEOS}&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&key=${ytKey}`;
+        const query = encodeURIComponent(`"${model.model}" review`);
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=${MAX_REVIEWER_VIDEOS}&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&videoDuration=medium&publishedAfter=${publishedAfter}&key=${ytKey}`;
         const r = await fetch(url);
         const data = await r.json();
         await supabase.from('quota_log').insert({ log_date: today, units_used: 100, call_type: 'search.list', model_id: model.model_id });
