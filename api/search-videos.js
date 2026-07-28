@@ -56,7 +56,7 @@ module.exports = async (req, res) => {
 
     // Step 1: search for up to 25 candidates (we'll filter down to 20)
     const query = encodeURIComponent(`"${model.model}"`);
-    const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=25&regionCode=${REGION}&relevanceLanguage=en&order=relevance&publishedAfter=${publishedAfter}&key=${ytKey}`;
+    const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=50&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&publishedAfter=${publishedAfter}&key=${ytKey}`;
 
     const searchRes = await fetch(searchUrl);
     const searchData = await searchRes.json();
