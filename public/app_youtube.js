@@ -87,7 +87,7 @@ async function triggerManualFetch() {
 
   try {
     const resp = await fetch('/api/cron-youtube-fetch', {
-      headers: { 'x-auth-token': getAdminToken() },
+      headers: { 'x-auth-token': AUTH.adminToken || '' },
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
