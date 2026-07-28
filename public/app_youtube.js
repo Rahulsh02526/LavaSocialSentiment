@@ -75,13 +75,23 @@ async function triggerManualFetch() {
   if (!isAdminLoggedIn()) { promptAdminLoginRedirect(); return; }
 
   ytManualTriggerBusy = true;
-  document.getElementById('ytManualBtn').disabled = true;
-  document.getElementById('ytManualBtn').innerHTML = '<span class="spinner"></span> Running...';
+  const btn = document.getElementById('ytManualBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Running...';
   const resultBox = document.getElementById('ytManualResultBox');
   resultBox.innerHTML = '';
 
+  // 65 second timeout — slightly more than Vercel's 60s function limit
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 65000);
+
   try {
-    const data = await apiGet('/api/cron-youtube-fetch');
+    const resp = await fetch('/api/cron-youtube-fetch', {
+      headers: { 'x-auth-token': getAdminToken() },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const data = await resp.json();
 
     resultBox.innerHTML = `
       <div class="notice">${escapeHtml(data.message || 'Done.')}</div>
@@ -95,9 +105,16 @@ async function triggerManualFetch() {
     renderTopbar();
     renderYoutubeView();
   } catch (e) {
-    resultBox.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') {
+      resultBox.innerHTML = `<div class="notice warn">Request timed out after 65 seconds — the server may still be processing. Refresh the page to see updated status.</div>`;
+    } else {
+      resultBox.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
+    }
   }
   ytManualTriggerBusy = false;
+  btn.disabled = false;
+  btn.innerHTML = isAdminLoggedIn() ? 'Run Fetch Batch Now' : 'Admin Login Required';
 }
 
 function renderYtMappedList() {
