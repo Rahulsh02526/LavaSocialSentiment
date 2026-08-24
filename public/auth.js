@@ -1,8 +1,6 @@
 // public/auth.js
-// ============================================================
-// CLIENT-SIDE AUTH — viewer gate (sessionStorage, dies on tab close) +
-// admin login state (also sessionStorage, separate key, separate page).
-// ============================================================
+// Single login gate — user chooses Viewer or Admin on the same screen.
+// Admin login gives full access without needing viewer password first.
 
 const AUTH = {
   viewerToken: null,
@@ -18,9 +16,6 @@ function isAdminLoggedIn() {
   return !!AUTH.adminToken;
 }
 
-// Wraps fetch with the viewer token attached (every read route needs at least this).
-// If an admin token exists, it's sent instead — admin tokens satisfy viewer checks too,
-// so a logged-in admin never needs to separately hold a viewer token.
 async function authedGet(path) {
   const token = AUTH.adminToken || AUTH.viewerToken;
   const r = await fetch(path, { headers: { 'x-auth-token': token || '' } });
@@ -57,76 +52,147 @@ function handleAuthExpired() {
   sessionStorage.removeItem('sip_admin_token');
   AUTH.viewerToken = null;
   AUTH.adminToken = null;
-  showViewerGate('Your session expired — please re-enter the password.');
+  showLoginGate('Your session expired — please log in again.');
 }
 
-// ---------- Viewer gate ----------
+// ── Single Login Gate — Viewer or Admin ──
 function showViewerGate(message) {
+  showLoginGate(message);
+}
+
+function showLoginGate(message) {
   document.getElementById('app').style.display = 'none';
   document.getElementById('loadingScreen').style.display = 'none';
-  let gate = document.getElementById('viewerGate');
+
+  let gate = document.getElementById('loginGate');
   if (!gate) {
     gate = document.createElement('div');
-    gate.id = 'viewerGate';
+    gate.id = 'loginGate';
     gate.className = 'loading-screen';
     gate.innerHTML = `
-      <span class="brand-mark" style="font-family: var(--mono); font-weight: 700; color: var(--accent); font-size: 24px;">SIP</span>
-      <div style="font-size: 14px; color: var(--text-dim); margin-bottom: 6px;">Social Intelligence Platform</div>
-      <div style="width: 260px;">
-        <input type="password" id="viewerPasswordInput" placeholder="Dashboard password" style="width:100%; margin-bottom:10px;">
-        <button class="primary" id="viewerLoginBtn" style="width:100%;">Enter</button>
-        <div id="viewerGateError" style="color: var(--neg); font-size: 12px; margin-top: 8px; text-align:center;"></div>
+      <div style="text-align:center; margin-bottom:20px;">
+        <span style="font-family:var(--mono); font-weight:700; color:var(--accent); font-size:28px;">SIP</span>
+        <div style="font-size:13px; color:var(--text-dim); margin-top:4px;">Social Intelligence Platform</div>
+      </div>
+
+      <!-- TAB SWITCHER -->
+      <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:20px; width:280px;">
+        <button id="tabViewer" onclick="switchLoginTab('viewer')"
+          style="flex:1; padding:9px; font-size:13px; font-weight:600; background:var(--accent); color:#fff; border:none; cursor:pointer;">
+          👤 Viewer
+        </button>
+        <button id="tabAdmin" onclick="switchLoginTab('admin')"
+          style="flex:1; padding:9px; font-size:13px; font-weight:600; background:var(--panel); color:var(--text-dim); border:none; cursor:pointer; border-left:1px solid var(--border);">
+          🔐 Admin
+        </button>
+      </div>
+
+      <div style="width:280px;">
+        <input type="password" id="loginPasswordInput" placeholder="Enter password" 
+          style="width:100%; margin-bottom:10px; font-size:14px;">
+        <button class="primary" id="loginSubmitBtn" style="width:100%; font-size:14px; padding:10px;">
+          Enter as Viewer
+        </button>
+        <div id="loginGateError" style="color:var(--neg); font-size:12px; margin-top:8px; text-align:center;"></div>
+        <div style="margin-top:12px; font-size:11px; color:var(--text-faint); text-align:center; line-height:1.5;">
+          Viewer — read-only access to all insights<br>
+          Admin — full access including data management
+        </div>
       </div>
     `;
     document.body.appendChild(gate);
-    document.getElementById('viewerLoginBtn').addEventListener('click', submitViewerPassword);
-    document.getElementById('viewerPasswordInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitViewerPassword(); });
+
+    document.getElementById('loginSubmitBtn').addEventListener('click', submitLogin);
+    document.getElementById('loginPasswordInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitLogin();
+    });
   }
+
   gate.style.display = 'flex';
-  if (message) document.getElementById('viewerGateError').textContent = message;
-  document.getElementById('viewerPasswordInput').focus();
+  if (message) document.getElementById('loginGateError').textContent = message;
+  document.getElementById('loginPasswordInput').value = '';
+  document.getElementById('loginPasswordInput').focus();
 }
 
-async function submitViewerPassword() {
-  const input = document.getElementById('viewerPasswordInput');
-  const errBox = document.getElementById('viewerGateError');
-  const btn = document.getElementById('viewerLoginBtn');
+let currentLoginMode = 'viewer';
+
+function switchLoginTab(mode) {
+  currentLoginMode = mode;
+  const viewerBtn = document.getElementById('tabViewer');
+  const adminBtn  = document.getElementById('tabAdmin');
+  const submitBtn = document.getElementById('loginSubmitBtn');
+  const input     = document.getElementById('loginPasswordInput');
+
+  if (mode === 'viewer') {
+    viewerBtn.style.background = 'var(--accent)';
+    viewerBtn.style.color = '#fff';
+    adminBtn.style.background = 'var(--panel)';
+    adminBtn.style.color = 'var(--text-dim)';
+    submitBtn.textContent = 'Enter as Viewer';
+    input.placeholder = 'Viewer password';
+  } else {
+    adminBtn.style.background = 'var(--accent)';
+    adminBtn.style.color = '#fff';
+    viewerBtn.style.background = 'var(--panel)';
+    viewerBtn.style.color = 'var(--text-dim)';
+    submitBtn.textContent = 'Enter as Admin';
+    input.placeholder = 'Admin password';
+  }
+  document.getElementById('loginGateError').textContent = '';
+  input.value = '';
+  input.focus();
+}
+
+async function submitLogin() {
+  const input   = document.getElementById('loginPasswordInput');
+  const errBox  = document.getElementById('loginGateError');
+  const btn     = document.getElementById('loginSubmitBtn');
   const password = input.value;
   if (!password) return;
 
   btn.disabled = true;
   errBox.textContent = '';
-  try {
-    const r = await fetch('/api/auth-viewer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Login failed');
 
-    sessionStorage.setItem('sip_viewer_token', data.token);
-    AUTH.viewerToken = data.token;
-    document.getElementById('viewerGate').style.display = 'none';
+  try {
+    if (currentLoginMode === 'admin') {
+      // Try admin login
+      const r = await fetch('/api/auth-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Incorrect admin password');
+
+      sessionStorage.setItem('sip_admin_token', data.token);
+      AUTH.adminToken = data.token;
+
+    } else {
+      // Try viewer login
+      const r = await fetch('/api/auth-viewer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Incorrect password');
+
+      sessionStorage.setItem('sip_viewer_token', data.token);
+      AUTH.viewerToken = data.token;
+    }
+
+    // Success — hide gate and load app
+    document.getElementById('loginGate').style.display = 'none';
     document.getElementById('loadingScreen').style.display = 'flex';
     initApp();
+
   } catch (e) {
     errBox.textContent = e.message;
   }
   btn.disabled = false;
 }
 
-// Called by any UI action that requires admin rights but the user isn't logged in as admin yet.
 function promptAdminLoginRedirect() {
-  if (confirm('This action requires admin login. Open the admin login page in a new tab?')) {
-    window.open('/admin.html', '_blank');
-  }
+  showLoginGate('Admin access required for this action.');
+  switchLoginTab('admin');
 }
-
-// admin.html pushes the token here directly via postMessage once login succeeds, since
-// sessionStorage itself does not sync between tabs (each tab has its own isolated copy).
-window.addEventListener('message', (event) => {
-  if (event.origin !== window.location.origin) return;
-  if (event.data && event.data.type === 'sip_admin_login' && event.data.token) {
-    AUTH.adminToken = event.data.token;
-    sessionStorage.setItem('sip_admin_token', event.data.token);
-    if (typeof renderTopbar === 'function') renderTopbar();
-    if (typeof renderView === 'function' && typeof STATE !== 'undefined') renderView(STATE.activeView);
-  }
-});
