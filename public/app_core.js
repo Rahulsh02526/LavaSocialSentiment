@@ -165,6 +165,8 @@ function renderView(view) {
   if (view === 'specs') renderSpecsView();
   if (view === 'matrix') renderMatrixView();
   if (view === 'gap') renderGapView();
+  if (view === 'admin') renderAdminView();
+  if (view === 'product-lab') renderProductLabView();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
