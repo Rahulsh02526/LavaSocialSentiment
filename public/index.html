@@ -10,14 +10,20 @@
 </head>
 <body>
 
-<div id="app">
+<div class="loading-screen" id="loadingScreen">
+  <span class="brand-mark" style="font-family: var(--mono); font-weight: 700; color: var(--accent);">SIP</span>
+  <div class="spinner" style="width:20px; height:20px;"></div>
+  <div class="status-text" id="loadingStatus">Loading...</div>
+</div>
+
+<div class="app" id="app" style="display:none;">
   <div class="topbar">
-    <div class="topbar-left">
-      <span class="sip-badge">SIP</span>
-      <span class="sip-title">Social Intelligence Platform</span>
-      <span class="version-badge">v0.5</span>
+    <div class="brand">
+      <span class="brand-mark">SIP</span>
+      <span class="brand-name">Social Intelligence Platform</span>
+      <span class="brand-ver">v0.5</span>
     </div>
-    <div id="topbarStats" class="topbar-stats"></div>
+    <div class="topbar-right" id="topbarStats"></div>
   </div>
 
   <div class="tabs" id="tabs">
@@ -35,17 +41,17 @@
     <div class="tab" data-view="admin" id="adminTab" style="display:none;">Admin Panel</div>
   </div>
 
-  <div class="views">
-    <div class="view active" id="view-query"></div>
+  <div class="content">
     <div class="view" id="view-overview"></div>
-    <div class="view" id="view-model"></div>
-    <div class="view" id="view-matrix"></div>
-    <div class="view" id="view-gap"></div>
-    <div class="view" id="view-themes"></div>
     <div class="view" id="view-ecom"></div>
     <div class="view" id="view-youtube"></div>
     <div class="view" id="view-tagging"></div>
     <div class="view" id="view-specs"></div>
+    <div class="view" id="view-matrix"></div>
+    <div class="view" id="view-gap"></div>
+    <div class="view active" id="view-query"></div>
+    <div class="view" id="view-model"></div>
+    <div class="view" id="view-themes"></div>
     <div class="view" id="view-product-lab"></div>
     <div class="view" id="view-admin"></div>
   </div>
@@ -68,12 +74,10 @@
 
 <script>
   // Show Admin Panel tab only when admin is logged in
-  // Called from app_core.js after auth state changes
   function syncAdminTabVisibility() {
     const tab = document.getElementById('adminTab');
-    if (tab) tab.style.display = isAdminLoggedIn() ? 'block' : 'none';
+    if (tab) tab.style.display = isAdminLoggedIn() ? 'inline-block' : 'none';
   }
-  // Poll every 2 seconds to catch postMessage admin login from admin.html
   setInterval(syncAdminTabVisibility, 2000);
 </script>
 
