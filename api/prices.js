@@ -51,6 +51,42 @@ module.exports = async (req, res) => {
       return res.status(200).json({ success: true, updated: results.length, errors, message: `${results.length} rating(s) updated.` });
     }
 
+    if (action === 'variant') {
+      // POST /api/prices?action=variant
+      // Body: { model_id, variant_label, launch_price, current_price }
+      const { model_id, variant_label, launch_price, current_price } = req.body || {};
+      if (!model_id || !variant_label) return res.status(400).json({ error: 'model_id and variant_label required.' });
+
+      // get existing variant_prices
+      const { data: model } = await supabase.from('models').select('model, variant_prices, base_variant').eq('model_id', model_id).single();
+      const existing = model?.variant_prices || {};
+
+      // add/update this variant
+      existing[variant_label] = {
+        launch: launch_price ? parseFloat(launch_price) : (existing[variant_label]?.launch || null),
+        current: current_price ? parseFloat(current_price) : (existing[variant_label]?.current || null),
+      };
+
+      // update model — also set base_variant if it's the first/cheapest
+      const variants = Object.entries(existing);
+      const cheapest = variants.sort((a,b) => (a[1].launch||999999) - (b[1].launch||999999))[0];
+      const base_variant = model?.base_variant || (cheapest ? cheapest[0] : null);
+      // update launch_price_inr to match base variant if not set
+      const basePrice = cheapest?.[1]?.launch;
+
+      const updateData = { variant_prices: existing };
+      if (!model?.base_variant && base_variant) updateData.base_variant = base_variant;
+      if (basePrice) updateData.launch_price_inr = basePrice;
+
+      await supabase.from('models').update(updateData).eq('model_id', model_id);
+
+      return res.status(200).json({
+        success: true,
+        message: `Variant "${variant_label}" saved for "${model?.model}".`,
+        variant_prices: existing,
+      });
+    }
+
     return res.status(400).json({ error: `Unknown action: ${action}` });
   } catch (e) {
     console.error('prices.js failed:', e);
