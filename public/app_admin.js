@@ -175,6 +175,9 @@ function renderAdminView() {
       <div id="ratingsPreview"></div>
     </div>
 
+    <!-- VARIANT PRICING -->
+    <div id="variantPricingSection"></div>
+
     <!-- PRICE UPDATE (single model) -->
     <div class="panel">
       <div class="panel-title" style="margin-bottom:16px;">💰 Update Current Price (Single Model)</div>
@@ -207,6 +210,10 @@ function renderAdminView() {
   `;
 
   // brand other toggle
+  // render variant pricing section
+  const vpSection = document.getElementById('variantPricingSection');
+  if (vpSection) vpSection.innerHTML = renderVariantPricingSection();
+
   document.getElementById('am_brand').addEventListener('change', function() {
     document.getElementById('am_brand_other_wrap').style.display = this.value === '_other' ? 'block' : 'none';
   });
@@ -517,6 +524,128 @@ async function submitPriceUpdate() {
     STATE.phones = fresh.phones;
     renderTopbar();
   } catch (e) {
+    statusEl.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── VARIANT PRICING UI ──
+function renderVariantPricingSection() {
+  return `
+    <div class="panel" style="margin-top:20px;">
+      <div class="panel-title" style="margin-bottom:4px;">📦 Manage Variant Prices</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">Add RAM/ROM variants with individual launch and current prices for any model.</div>
+      <div id="variantStatus"></div>
+      <div style="display:grid; grid-template-columns:1fr 140px 140px 140px 140px auto; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+        <div class="field">
+          <label>Model</label>
+          <select id="vp_model">
+            <option value="">Select model...</option>
+            ${(STATE.phones || []).sort((a,b) => a.model.localeCompare(b.model)).map(p =>
+              `<option value="${p.model_id}">${p.model}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>RAM</label>
+          <select id="vp_ram">
+            <option value="2GB">2GB</option>
+            <option value="3GB">3GB</option>
+            <option value="4GB" selected>4GB</option>
+            <option value="6GB">6GB</option>
+            <option value="8GB">8GB</option>
+            <option value="12GB">12GB</option>
+            <option value="16GB">16GB</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Storage</label>
+          <select id="vp_storage">
+            <option value="32GB">32GB</option>
+            <option value="64GB">64GB</option>
+            <option value="128GB" selected>128GB</option>
+            <option value="256GB">256GB</option>
+            <option value="512GB">512GB</option>
+            <option value="1TB">1TB</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Launch Price ₹</label>
+          <input type="number" id="vp_launch" placeholder="e.g. 13999">
+        </div>
+        <div class="field">
+          <label>Current Price ₹</label>
+          <input type="number" id="vp_current" placeholder="e.g. 12499">
+        </div>
+        <button class="primary" style="margin-bottom:1px;" onclick="submitVariantPrice()">Save</button>
+      </div>
+
+      <!-- Existing variants for selected model -->
+      <div id="vp_existing" style="margin-top:14px;"></div>
+    </div>
+  `;
+}
+
+document.addEventListener('change', function(e) {
+  if (e.target && e.target.id === 'vp_model') loadExistingVariants(e.target.value);
+});
+
+function loadExistingVariants(modelId) {
+  const box = document.getElementById('vp_existing');
+  if (!box || !modelId) return;
+  const phone = STATE.phones.find(p => p.model_id == modelId);
+  if (!phone) return;
+  const variants = phone.variant_prices || {};
+  const entries = Object.entries(variants);
+  if (!entries.length) { box.innerHTML = `<div style="font-size:12px; color:var(--text-faint);">No variants saved yet for ${phone.model}.</div>`; return; }
+  box.innerHTML = `
+    <div style="font-size:11px; font-weight:600; color:var(--text-faint); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.1em;">Existing Variants — ${phone.model}</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Variant</th><th class="num">Launch Price</th><th class="num">Current Price</th><th>Discount</th></tr></thead>
+        <tbody>
+          ${entries.map(([label, prices]) => {
+            const discount = prices.launch && prices.current
+              ? Math.round((1 - prices.current / prices.launch) * 100)
+              : null;
+            return `<tr>
+              <td style="font-weight:600;">${escapeHtml(label)}</td>
+              <td class="num">${prices.launch ? '₹' + prices.launch.toLocaleString('en-IN') : '–'}</td>
+              <td class="num" style="color:var(--pos);">${prices.current ? '₹' + prices.current.toLocaleString('en-IN') : '–'}</td>
+              <td style="font-size:11px; color:${discount > 0 ? 'var(--pos)' : 'var(--text-faint)'};">${discount !== null ? discount + '% off' : '–'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function submitVariantPrice() {
+  const model_id  = document.getElementById('vp_model')?.value;
+  const ram       = document.getElementById('vp_ram')?.value;
+  const storage   = document.getElementById('vp_storage')?.value;
+  const launch    = document.getElementById('vp_launch')?.value;
+  const current   = document.getElementById('vp_current')?.value;
+  const statusEl  = document.getElementById('variantStatus');
+
+  if (!model_id || !ram || !storage) { statusEl.innerHTML = `<div class="notice danger">Select a model, RAM, and Storage.</div>`; return; }
+  if (!launch && !current) { statusEl.innerHTML = `<div class="notice danger">Enter at least one price.</div>`; return; }
+
+  const ram_val = ram === 'other' ? (prompt('Enter RAM value (e.g. 10GB):') || 'other') : ram;
+  const storage_val = storage === 'other' ? (prompt('Enter Storage value (e.g. 1.5TB):') || 'other') : storage;
+  const variant_label = `${ram_val}/${storage_val}`;
+  statusEl.innerHTML = `<div class="notice"><span class="spinner"></span> Saving...</div>`;
+
+  try {
+    const result = await apiPost('/api/prices?action=variant', { model_id: parseInt(model_id), variant_label, launch_price: launch, current_price: current });
+    statusEl.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
+
+    // update local STATE so table refreshes
+    const phone = STATE.phones.find(p => p.model_id == model_id);
+    if (phone) { phone.variant_prices = result.variant_prices; loadExistingVariants(model_id); }
+  } catch(e) {
     statusEl.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
   }
 }
