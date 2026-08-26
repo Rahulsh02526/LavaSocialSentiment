@@ -75,6 +75,7 @@ function renderModelDeepDiveBody() {
   body.innerHTML = `
     <div class="grid-4" style="margin-bottom:18px;">
       <div class="kpi"><div class="kpi-label">Launch Price</div><div class="kpi-value">${phone.launch_price_inr ? '₹'+Math.round(phone.launch_price_inr).toLocaleString('en-IN') : '–'}</div><div class="kpi-sub">${phone.launch_date||''} · ${PRICE_SEGMENT_LABELS[phone.price_segment]||phone.price_segment||''}</div></div>
+      ${phone.current_price_inr && phone.current_price_inr !== phone.launch_price_inr ? `<div class="kpi"><div class="kpi-label">Current Price</div><div class="kpi-value" style="color:var(--pos);">₹${Math.round(phone.current_price_inr).toLocaleString('en-IN')}</div><div class="kpi-sub">${phone.price_last_updated ? 'Updated '+phone.price_last_updated : 'Latest'}</div></div>` : ''}
       <div class="kpi"><div class="kpi-label">Lifecycle Status</div><div class="kpi-value" style="font-size:16px;">${lifecycleBadge(status)}</div><div class="kpi-sub">sentiment freeze: ${phone.sentiment_frozen_at||'–'} · price freeze: ${phone.price_frozen_at||'–'}</div></div>
       <div class="kpi"><div class="kpi-label">Brand / Tier</div><div class="kpi-value" style="font-size:16px; text-transform:capitalize;">${phone.brand||'–'}</div><div class="kpi-sub">${phone.brand_tier ? 'Tier '+phone.brand_tier : 'Ad-hoc / untiered'}</div></div>
       <div class="kpi"><div class="kpi-label">Comments</div><div class="kpi-value">${comments.length}</div><div class="kpi-sub">E-com: ${taggedEcom.length} tagged · YT: ${taggedYT.length} tagged</div></div>
@@ -115,6 +116,32 @@ function renderModelDeepDiveBody() {
       <div class="panel-title">Marketing Assets</div>
       <div id="marketingAssetsBox"></div>
     </div>
+
+    ${phone.variant_prices && Object.keys(phone.variant_prices).length > 0 ? `
+    <div class="panel">
+      <div class="panel-title" style="margin-bottom:12px;">📦 Variant Prices</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Variant</th><th class="num">Launch Price</th><th class="num">Current Price</th><th>Discount</th><th>vs Base</th></tr>
+          </thead>
+          <tbody>
+            ${Object.entries(phone.variant_prices).sort((a,b) => (a[1].launch||0)-(b[1].launch||0)).map(([label, prices]) => {
+              const disc = prices.launch && prices.current ? Math.round((1 - prices.current/prices.launch)*100) : null;
+              const vsDiff = prices.launch && phone.launch_price_inr ? prices.launch - phone.launch_price_inr : null;
+              const isBase = label === phone.base_variant;
+              return `<tr style="${isBase ? 'background:rgba(34,197,94,0.05);' : ''}">
+                <td style="font-weight:600;">${escapeHtml(label)}${isBase ? ' <span style="font-size:9px;color:var(--pos);font-weight:700;">BASE</span>' : ''}</td>
+                <td class="num">${prices.launch ? '₹'+prices.launch.toLocaleString('en-IN') : '–'}</td>
+                <td class="num" style="color:var(--pos);">${prices.current ? '₹'+prices.current.toLocaleString('en-IN') : '–'}</td>
+                <td style="font-size:11px; color:${disc > 0 ? 'var(--pos)' : 'var(--text-faint)'};">${disc !== null ? disc+'% off' : '–'}</td>
+                <td style="font-size:11px; color:${vsDiff > 0 ? 'var(--neu)' : 'var(--text-faint)'};">${vsDiff !== null && vsDiff !== 0 ? (vsDiff > 0 ? '+' : '')+vsDiff.toLocaleString('en-IN') : '–'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
 
     ${status === 'frozen' ? `<div class="notice warn">This model's sentiment and price tracking are both frozen (past 12 months). Data shown is preserved for historical/temporal analysis only.</div>` :
       status === 'semi_active' ? `<div class="notice warn">Sentiment tracking is frozen for this model (past 6 months) — only price updates continue. Comment data below reflects what was captured before the freeze.</div>` : ''}
