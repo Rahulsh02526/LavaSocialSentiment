@@ -1,7 +1,6 @@
 // api/product-suggester.js
-// POST /api/product-suggester
-// Body: { target_price, proposed_specs, platform_focus }
-// Returns: market snapshot, consumer buzz, verdict, recommendation
+// POST /api/product-suggester?action=product  — Product Lab (default)
+// POST /api/product-suggester?action=positioning — Brand Positioning Suggester
 // Uses existing comments/tags/specs data + Claude synthesis
 
 const { getSupabaseClient } = require('../lib/supabase');
@@ -37,6 +36,10 @@ module.exports = async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized.' });
   }
 
+  const action = req.query.action || 'product';
+  if (action === 'positioning') return handlePositioning(req, res);
+
+  // ── DEFAULT: Product Lab ──
   const { target_price, proposed_specs, platform_focus } = req.body || {};
   if (!target_price) return res.status(400).json({ error: 'target_price is required.' });
 
@@ -51,12 +54,17 @@ module.exports = async (req, res) => {
     const supabase = getSupabaseClient();
 
     // ── 1. Get competitor models in price band ──
-    const { data: competitors } = await supabase
+    // Include variant_prices — check if ANY variant falls in the price band
+    const { data: allModels } = await supabase
       .from('models')
-      .select('model_id, model, brand, launch_price_inr, current_price_inr, price_segment')
-      .gte('launch_price_inr', priceLow)
-      .lte('launch_price_inr', priceHigh)
-      .order('launch_price_inr');
+      .select('model_id, model, brand, launch_price_inr, current_price_inr, price_segment, variant_prices, base_variant');
+
+    // filter: model's base price OR any variant price falls in band
+    const competitors = (allModels || []).filter(m => {
+      if (m.launch_price_inr >= priceLow && m.launch_price_inr <= priceHigh) return true;
+      const variants = m.variant_prices ? Object.values(m.variant_prices) : [];
+      return variants.some(v => v.launch >= priceLow && v.launch <= priceHigh);
+    }).sort((a, b) => a.launch_price_inr - b.launch_price_inr);
 
     if (!competitors?.length) {
       return res.status(200).json({
@@ -256,3 +264,129 @@ Respond strictly in English only — this is a professional product strategy too
     res.status(500).json({ error: e.message });
   }
 };
+
+// ── BRAND POSITIONING HANDLER ──
+async function handlePositioning(req, res) {
+  const { model_name, target_price, specs, platform_focus, brand } = req.body || {};
+  if (!target_price) return res.status(400).json({ error: 'target_price is required.' });
+
+  const price = parseFloat(target_price);
+  const segment = deriveSegment(price);
+  const priceLow  = price * 0.82;
+  const priceHigh = price * 1.18;
+
+  try {
+    const supabase = getSupabaseClient();
+
+    const { data: competitors } = await supabase
+      .from('models')
+      .select('model_id, model, brand, launch_price_inr')
+      .gte('launch_price_inr', priceLow)
+      .lte('launch_price_inr', priceHigh)
+      .order('launch_price_inr');
+
+    const modelIds = (competitors || []).map(c => c.model_id);
+
+    const [{ data: assets }, { data: videos }, { data: commentRows }] = await Promise.all([
+      supabase.from('marketing_assets').select('model_id, type, platform, campaign_name, tags, notes').in('model_id', modelIds),
+      supabase.from('model_videos').select('model_id, title, channel, video_type').in('model_id', modelIds).eq('video_type', 'official'),
+      supabase.from('comments').select('id, model_id').in('model_id', modelIds),
+    ]);
+
+    const commentIds = (commentRows || []).map(c => c.id);
+    const { data: tags } = await supabase.from('tags').select('comment_id, mentions').in('comment_id', commentIds);
+
+    // compute gaps
+    const paramStats = {};
+    Object.keys(PARAM_LABELS).forEach(p => { paramStats[p] = { mentions: 0, pos: 0, neg: 0 }; });
+    (tags || []).forEach(tag => {
+      (tag.mentions || []).forEach(m => {
+        if (!paramStats[m.parameter]) return;
+        paramStats[m.parameter].mentions++;
+        if (m.sentiment === 'positive') paramStats[m.parameter].pos++;
+        if (m.sentiment === 'negative') paramStats[m.parameter].neg++;
+      });
+    });
+
+    const gaps = Object.entries(paramStats)
+      .filter(([p, s]) => s.mentions >= 10 && p !== 'overall')
+      .map(([p, s]) => ({
+        parameter: p, label: PARAM_LABELS[p], mentions: s.mentions,
+        positivity: (s.pos + s.neg) > 0 ? Math.round(s.pos / (s.pos + s.neg) * 100) : null,
+        is_gap: s.mentions >= 15 && (s.pos + s.neg) > 0 && (s.pos / (s.pos + s.neg)) < 0.5,
+      }))
+      .sort((a, b) => (b.is_gap ? 1 : 0) - (a.is_gap ? 1 : 0) || b.mentions - a.mentions)
+      .slice(0, 8);
+
+    const competitorMessaging = (competitors || []).map(c => {
+      const cAssets = (assets || []).filter(a => a.model_id === c.model_id);
+      const cVideo  = (videos || []).find(v => v.model_id === c.model_id);
+      return {
+        model: c.model, brand: c.brand, price: c.launch_price_inr,
+        official_video_title: cVideo?.title || null,
+        campaigns: cAssets.map(a => a.campaign_name).filter(Boolean),
+      };
+    });
+
+    const specsText = specs ? Object.entries(specs).map(([k,v]) => `${k}: ${v}`).join(', ') : 'Not specified';
+    const gapSummary = gaps.filter(g => g.is_gap).map(g => `${g.label}: ${g.mentions} mentions, ${g.positivity}% positive`).join('\n');
+    const messagingSummary = competitorMessaging.filter(c => c.official_video_title || c.campaigns.length)
+      .map(c => `${c.model} (₹${c.price?.toLocaleString('en-IN')}): ${c.official_video_title || ''} ${c.campaigns.join(', ')}`).join('\n');
+
+    const prompt = `You are a brand strategy consultant for LAVA Mobiles, an Indian smartphone brand.
+
+PRODUCT BRIEF:
+Model: ${model_name || 'New LAVA Model'}
+Brand: ${brand || 'LAVA'}
+Target Price: ₹${price.toLocaleString('en-IN')} (${segment} segment)
+Platform: ${platform_focus || 'Online'}
+Proposed Specs: ${specsText}
+
+COMPETITOR MESSAGING IN THIS SEGMENT:
+${messagingSummary || 'No explicit competitor messaging data — infer from market knowledge.'}
+
+CONSUMER SENTIMENT GAPS (opportunity areas):
+${gapSummary || 'No major gaps detected.'}
+
+Generate 3 distinct positioning options. Format EXACTLY as:
+
+## OPTION A: [TITLE]
+**Tagline:** "[tagline]"
+**Core Message:** [1-2 sentences]
+**Why It Works:** [data-backed rationale]
+**Risk:** [one honest risk]
+
+## OPTION B: [TITLE]
+**Tagline:** "[tagline]"
+**Core Message:** [1-2 sentences]
+**Why It Works:** [data-backed rationale]
+**Risk:** [one honest risk]
+
+## OPTION C: [TITLE]
+**Tagline:** "[tagline]"
+**Core Message:** [1-2 sentences]
+**Why It Works:** [data-backed rationale]
+**Risk:** [one honest risk]
+
+## RECOMMENDED: [Which option and why — 2-3 sentences]
+
+## WHAT TO AVOID
+[2-3 messaging traps competitors are already stuck in]
+
+Respond strictly in English. Be specific to Indian market. Max 400 words.`;
+
+    const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY || '', 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 800, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const aiData = await aiRes.json();
+    const positioning = (aiData.content || []).find(b => b.type === 'text')?.text || '';
+
+    res.status(200).json({ segment, price_band: { low: Math.round(priceLow), high: Math.round(priceHigh) }, competitors: competitorMessaging, gaps, positioning, total_comments_analysed: commentIds.length });
+
+  } catch (e) {
+    console.error('brand-positioning failed:', e);
+    res.status(500).json({ error: e.message });
+  }
+}
