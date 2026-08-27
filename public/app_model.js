@@ -123,24 +123,29 @@ function renderModelDeepDiveBody() {
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Variant</th><th class="num">Launch Price</th><th class="num">Current Price</th><th>Discount</th><th>vs Base</th></tr>
+            <tr><th>Variant</th><th class="num">Launch Price</th><th class="num">Current Price</th><th class="num">Difference</th><th class="num">vs Base</th></tr>
           </thead>
           <tbody>
             ${Object.entries(phone.variant_prices).sort((a,b) => (a[1].launch||0)-(b[1].launch||0)).map(([label, prices]) => {
-              const disc = prices.launch && prices.current ? Math.round((1 - prices.current/prices.launch)*100) : null;
+              const diff = prices.launch && prices.current ? prices.current - prices.launch : null;
+              const diffColor = diff === null ? 'var(--text-faint)' : diff > 0 ? 'var(--neg)' : diff < 0 ? 'var(--pos)' : 'var(--text-faint)';
+              const diffText = diff === null ? '–' : (diff > 0 ? '+' : '') + diff.toLocaleString('en-IN');
               const vsDiff = prices.launch && phone.launch_price_inr ? prices.launch - phone.launch_price_inr : null;
+              const vsColor = vsDiff === null || vsDiff === 0 ? 'var(--text-faint)' : vsDiff > 0 ? 'var(--neu)' : 'var(--pos)';
+              const vsText = vsDiff === null || vsDiff === 0 ? '–' : (vsDiff > 0 ? '+' : '') + vsDiff.toLocaleString('en-IN');
               const isBase = label === phone.base_variant;
               return `<tr style="${isBase ? 'background:rgba(34,197,94,0.05);' : ''}">
                 <td style="font-weight:600;">${escapeHtml(label)}${isBase ? ' <span style="font-size:9px;color:var(--pos);font-weight:700;">BASE</span>' : ''}</td>
                 <td class="num">${prices.launch ? '₹'+prices.launch.toLocaleString('en-IN') : '–'}</td>
-                <td class="num" style="color:var(--pos);">${prices.current ? '₹'+prices.current.toLocaleString('en-IN') : '–'}</td>
-                <td style="font-size:11px; color:${disc > 0 ? 'var(--pos)' : 'var(--text-faint)'};">${disc !== null ? disc+'% off' : '–'}</td>
-                <td style="font-size:11px; color:${vsDiff > 0 ? 'var(--neu)' : 'var(--text-faint)'};">${vsDiff !== null && vsDiff !== 0 ? (vsDiff > 0 ? '+' : '')+vsDiff.toLocaleString('en-IN') : '–'}</td>
+                <td class="num" style="color:var(--text);">${prices.current ? '₹'+prices.current.toLocaleString('en-IN') : '–'}</td>
+                <td class="num" style="color:${diffColor}; font-weight:600;">${diffText}</td>
+                <td class="num" style="color:${vsColor};">${vsText}</td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
       </div>
+      <div style="margin-top:8px; font-size:10px; color:var(--text-faint);">Difference = Current − Launch · vs Base = Launch price vs base variant</div>
     </div>` : ''}
 
     ${status === 'frozen' ? `<div class="notice warn">This model's sentiment and price tracking are both frozen (past 12 months). Data shown is preserved for historical/temporal analysis only.</div>` :
