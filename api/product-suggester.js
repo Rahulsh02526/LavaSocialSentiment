@@ -37,7 +37,8 @@ module.exports = async (req, res) => {
   }
 
   const action = req.query.action || 'product';
-  if (action === 'positioning') return handlePositioning(req, res);
+  if (action === 'positioning')  return handlePositioning(req, res);
+  if (action === 'kv-analysis')  return handleKVAnalysis(req, res);
 
   // ── DEFAULT: Product Lab ──
   const { target_price, proposed_specs, platform_focus } = req.body || {};
@@ -387,6 +388,80 @@ Respond strictly in English. Be specific to Indian market. Max 400 words.`;
 
   } catch (e) {
     console.error('brand-positioning failed:', e);
+    res.status(500).json({ error: e.message });
+  }
+}
+
+// ── KV VISION ANALYSIS HANDLER ──
+async function handleKVAnalysis(req, res) {
+  const { url, brand } = req.body || {};
+  if (!url || !url.startsWith('http')) {
+    return res.status(400).json({ error: 'Valid image URL required.' });
+  }
+
+  try {
+    const prompt = `You are a brand strategy analyst specialising in Indian consumer electronics marketing.
+
+Analyse this smartphone marketing creative (KV/Key Visual)${brand ? ` for ${brand}` : ''}.
+
+Provide a structured analysis covering:
+
+**Hero Message**
+What is the primary message or claim being made? (exact text if visible, or inferred intent)
+
+**Positioning Strategy**
+What positioning angle is this creative taking? (e.g. performance, camera, battery, value, lifestyle, aspiration)
+
+**Target Audience**
+Who is this creative speaking to? (age group, lifestyle, motivation)
+
+**Emotional Tone**
+What emotion or aspiration is being triggered? (e.g. excitement, trust, FOMO, pride)
+
+**Visual Strategy**
+What do the colors, imagery, and layout communicate? What is the hierarchy of information?
+
+**Competitive Signal**
+What does this tell us about what the brand believes is most important to communicate at this price point?
+
+**Positioning Verdict**
+In one sentence — what is this brand trying to own in the consumer's mind?
+
+Respond strictly in English. Be specific and insightful. Max 300 words.`;
+
+    const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 600,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'url', url },
+            },
+            {
+              type: 'text',
+              text: prompt,
+            },
+          ],
+        }],
+      }),
+    });
+
+    const aiData = await aiRes.json();
+    if (aiData.error) throw new Error(aiData.error.message || 'Claude API error');
+    const analysis = (aiData.content || []).find(b => b.type === 'text')?.text || '';
+
+    res.status(200).json({ analysis, url, brand });
+  } catch (e) {
+    console.error('kv-analysis failed:', e);
     res.status(500).json({ error: e.message });
   }
 }
