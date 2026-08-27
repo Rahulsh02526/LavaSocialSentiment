@@ -690,71 +690,61 @@ async function parseAssetsXlsx() {
   preview.innerHTML = '';
 
   const reader = new FileReader();
-  reader.onerror = () => { status.innerHTML = `<div class="notice danger">File read failed — try again.</div>`; };
+  reader.onerror = () => { status.innerHTML = `<div class="notice danger">File read failed.</div>`; };
   reader.onload = (e) => {
     try {
-      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: false });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-      // Template structure: Row 1 = instruction, Row 2 = headers, Row 3+ = data
-      // Use fixed column indices based on known template structure:
-      // Col 0: Model Name, 1: Website, 2: KV1, 3: KV2, 4: KV3, 5: YouTube, 6: X, 7: Instagram, 8: Facebook, 9: Notes
-      const COLS = { model:0, official_website:1, kv1:2, kv2:3, kv3:4, youtube:5, x_twitter:6, instagram:7, facebook:8, notes:9 };
-
-      // Find data start row — first row where col 0 has a real model name (not instruction/header)
-      let dataStart = 2; // default: row index 2 (row 3 in Excel)
-      for (let i = 0; i < Math.min(raw.length, 5); i++) {
-        const val = String(raw[i]?.[0] || '').trim();
-        if (val && !val.startsWith('⬇') && val !== 'Model Name *' && val !== 'Model Name') {
-          dataStart = i;
-          break;
-        }
-      }
+      // Get the range
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:J100');
+      const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
+      // Fixed column order matching the template exactly:
+      // A=model, B=website, C=kv1, D=kv2, E=kv3, F=youtube, G=x_twitter, H=instagram, I=facebook, J=notes
+      const keys = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
 
       const rows = [];
-      for (let i = dataStart; i < raw.length; i++) {
-        const r = raw[i];
-        if (!r) continue;
-        const model = String(r[COLS.model] || '').trim();
-        if (!model || model.startsWith('⬇') || model === 'Model Name *') continue;
-
-        const obj = { model };
-        Object.entries(COLS).forEach(([key, ci]) => {
-          if (key === 'model') return;
-          const val = r[ci];
-          obj[key] = (val !== null && val !== undefined) ? String(val).trim() : '';
-        });
-        rows.push(obj);
+      // Start from row index 2 (row 3 in Excel = first data row, skip instruction+header)
+      for (let R = 2; R <= range.e.r; R++) {
+        const row = {};
+        for (let C = 0; C <= 9; C++) {
+          const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
+          const cell = ws[cellAddr];
+          row[keys[C]] = cell ? String(cell.v || '').trim() : '';
+        }
+        if (!row.model || row.model.startsWith('⬇') || row.model === 'Model Name *') continue;
+        rows.push(row);
       }
 
-      const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
       const validRows = rows.filter(r => r.model && urlFields.some(f => r[f] && r[f].startsWith('http')));
 
       if (!validRows.length) {
-        status.innerHTML = `<div class="notice danger">No rows with valid URLs found after parsing ${rows.length} row(s). Check that URLs start with https://</div>`;
+        status.innerHTML = `<div class="notice danger">No valid rows found. Parsed ${rows.length} rows. First row model: "${rows[0]?.model||'none'}", website: "${rows[0]?.official_website||'none'}"</div>`;
         return;
       }
 
-      status.innerHTML = `<div class="notice">${validRows.length} model(s) with valid URLs found. Review below.</div>`;
+      status.innerHTML = '';
       preview.innerHTML = `
-        <div class="table-wrap" style="max-height:320px; overflow-y:auto; margin-bottom:12px;">
+        <div style="font-size:12px; color:var(--text-faint); margin-bottom:10px;">${validRows.length} model(s) ready to upload</div>
+        <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-bottom:12px;">
           <table>
             <thead><tr><th>Model</th><th>Site</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YT</th><th>X</th><th>IG</th><th>FB</th></tr></thead>
             <tbody>
               ${validRows.map(r => `<tr>
                 <td style="font-weight:500; font-size:11px;">${escapeHtml(r.model)}</td>
-                ${urlFields.map(f => `<td style="font-size:10px; text-align:center;">${r[f] && r[f].startsWith('http')
-                  ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--pos);">✓</a>`
-                  : '<span style="color:var(--border);">–</span>'}</td>`).join('')}
+                ${urlFields.map(f => `<td style="text-align:center;">${r[f] && r[f].startsWith('http')
+                  ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--pos); font-size:11px;">✓</a>`
+                  : '<span style="color:var(--border); font-size:11px;">–</span>'}</td>`).join('')}
               </tr>`).join('')}
             </tbody>
           </table>
         </div>
-        <button class="primary" onclick="submitAssetsUpload(${JSON.stringify(validRows).replace(/"/g,'&quot;')})">
-          ✓ Upload Assets for ${validRows.length} Model(s)
-        </button>
-        <button class="ghost" style="margin-left:8px;" onclick="document.getElementById('assetsPreview').innerHTML=''; document.getElementById('assetsUploadStatus').innerHTML='';">Cancel</button>
+        <div style="display:flex; gap:10px;">
+          <button class="primary" id="assetsUploadBtn" onclick="submitAssetsUpload(${JSON.stringify(validRows).replace(/"/g,'&quot;')})">
+            ✓ Upload Assets for ${validRows.length} Model(s)
+          </button>
+          <button class="ghost" onclick="document.getElementById('assetsPreview').innerHTML=''; document.getElementById('assetsUploadStatus').innerHTML='';">Cancel</button>
+        </div>
       `;
     } catch(err) {
       status.innerHTML = `<div class="notice danger">Parse error: ${escapeHtml(err.message)}</div>`;
