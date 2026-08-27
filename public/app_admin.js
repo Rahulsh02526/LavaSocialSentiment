@@ -717,6 +717,7 @@ async function parseAssetsXlsx() {
       }
 
       const validRows = rows.filter(r => r.model && urlFields.some(f => r[f] && r[f].startsWith('http')));
+      window._pendingAssets = validRows; // store globally to avoid large onclick string
 
       if (!validRows.length) {
         status.innerHTML = `<div class="notice danger">No valid rows found. Parsed ${rows.length} rows. First row model: "${rows[0]?.model||'none'}", website: "${rows[0]?.official_website||'none'}"</div>`;
@@ -740,10 +741,10 @@ async function parseAssetsXlsx() {
           </table>
         </div>
         <div style="display:flex; gap:10px;">
-          <button class="primary" id="assetsUploadBtn" onclick="submitAssetsUpload(${JSON.stringify(validRows).replace(/"/g,'&quot;')})">
+          <button class="primary" id="assetsUploadBtn" onclick="submitAssetsUpload()">
             ✓ Upload Assets for ${validRows.length} Model(s)
           </button>
-          <button class="ghost" onclick="document.getElementById('assetsPreview').innerHTML=''; document.getElementById('assetsUploadStatus').innerHTML='';">Cancel</button>
+          <button class="ghost" onclick="document.getElementById('assetsPreview').innerHTML=''; document.getElementById('assetsUploadStatus').innerHTML=''; window._pendingAssets=null;">Cancel</button>
         </div>
       `;
     } catch(err) {
@@ -754,15 +755,18 @@ async function parseAssetsXlsx() {
 }
 
 async function submitAssetsUpload(rows) {
+  const data = rows || window._pendingAssets;
+  if (!data || !data.length) { alert('No asset data to upload.'); return; }
   const status = document.getElementById('assetsUploadStatus');
-  status.innerHTML = `<div class="notice"><span class="spinner"></span> Uploading assets for ${rows.length} models...</div>`;
+  status.innerHTML = `<div class="notice"><span class="spinner"></span> Uploading assets for ${data.length} models...</div>`;
   try {
-    const result = await apiPost('/api/prices?action=assets', { rows });
+    const result = await apiPost('/api/prices?action=assets', { rows: data });
     status.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
     if (result.errors?.length) {
       status.innerHTML += `<div class="notice danger" style="margin-top:6px;">${result.errors.map(e => escapeHtml(e)).join('<br>')}</div>`;
     }
     document.getElementById('assetsPreview').innerHTML = '';
+    window._pendingAssets = null;
     // refresh data
     const fresh = await apiGet('/api/data');
     STATE.marketingAssets = fresh.marketingAssets;
