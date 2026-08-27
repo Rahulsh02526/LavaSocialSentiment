@@ -689,95 +689,78 @@ async function parseAssetsXlsx() {
   status.innerHTML = `<div class="notice"><span class="spinner"></span> Parsing...</div>`;
   preview.innerHTML = '';
 
-  try {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  const reader = new FileReader();
+  reader.onerror = () => { status.innerHTML = `<div class="notice danger">File read failed — try again.</div>`; };
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-        // find header row — look for 'Model Name' in any of first 3 rows
-        let headerRowIdx = -1;
-        for (let i = 0; i < Math.min(raw.length, 4); i++) {
-          if (raw[i].some(c => String(c||'').toLowerCase().includes('model name') || String(c||'').toLowerCase() === 'model')) {
-            headerRowIdx = i;
-            break;
-          }
+      // Template structure: Row 1 = instruction, Row 2 = headers, Row 3+ = data
+      // Use fixed column indices based on known template structure:
+      // Col 0: Model Name, 1: Website, 2: KV1, 3: KV2, 4: KV3, 5: YouTube, 6: X, 7: Instagram, 8: Facebook, 9: Notes
+      const COLS = { model:0, official_website:1, kv1:2, kv2:3, kv3:4, youtube:5, x_twitter:6, instagram:7, facebook:8, notes:9 };
+
+      // Find data start row — first row where col 0 has a real model name (not instruction/header)
+      let dataStart = 2; // default: row index 2 (row 3 in Excel)
+      for (let i = 0; i < Math.min(raw.length, 5); i++) {
+        const val = String(raw[i]?.[0] || '').trim();
+        if (val && !val.startsWith('⬇') && val !== 'Model Name *' && val !== 'Model Name') {
+          dataStart = i;
+          break;
         }
-        if (headerRowIdx === -1) headerRowIdx = 1; // fallback: row 2 (0-indexed = index 1)
-
-        const headers = raw[headerRowIdx].map(h => String(h).toLowerCase().trim()
-          .replace(/\s*\*/g,'').replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'_'));
-
-        // map headers to field names
-        const fieldMap = {
-          'model_name': 'model', 'model': 'model',
-          'official_website_url': 'official_website', 'official_website': 'official_website',
-          'kv_1_url': 'kv1', 'kv1': 'kv1', 'kv_1': 'kv1',
-          'kv_2_url': 'kv2', 'kv2': 'kv2', 'kv_2': 'kv2',
-          'kv_3_url': 'kv3', 'kv3': 'kv3', 'kv_3': 'kv3',
-          'youtube_url': 'youtube', 'youtube': 'youtube',
-          'x___twitter_url': 'x_twitter', 'x_twitter_url': 'x_twitter', 'x_twitter': 'x_twitter',
-          'instagram_url': 'instagram', 'instagram': 'instagram',
-          'facebook_url': 'facebook', 'facebook': 'facebook',
-          'notes': 'notes',
-        };
-        const colMap = headers.map(h => fieldMap[h] || null);
-
-        const rows = [];
-        for (let i = headerRowIdx + 1; i < raw.length; i++) {
-          const r = raw[i];
-          if (!r || r.every(c => c === '' || c === null)) continue;
-          const obj = {};
-          colMap.forEach((key, ci) => {
-            if (!key) return;
-            const val = r[ci];
-            obj[key] = (val === null || val === undefined || val === 'None') ? '' : String(val).trim();
-          });
-          if (!obj.model || obj.model.startsWith('⬇')) continue;
-          rows.push(obj);
-        }
-
-        const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
-        const validRows = rows.filter(r => r.model && r.model !== 'None' && urlFields.some(f => r[f] && String(r[f]).startsWith('http')));
-
-        if (!validRows.length) {
-          status.innerHTML = `<div class="notice danger">No rows with valid URLs found. Make sure URLs start with https://</div>`;
-          return;
-        }
-
-        status.innerHTML = `<div class="notice">${validRows.length} model(s) with valid URLs found. Review below.</div>`;
-        preview.innerHTML = `
-          <div class="table-wrap" style="max-height:320px; overflow-y:auto; margin-bottom:12px;">
-            <table>
-              <thead><tr><th>Model</th><th>Website</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YouTube</th><th>X</th><th>IG</th><th>FB</th></tr></thead>
-              <tbody>
-                ${validRows.map(r => `<tr>
-                  <td style="font-weight:500;">${escapeHtml(r.model)}</td>
-                  ${urlFields.slice(0,8).map(f =>
-                    `<td style="font-size:10px;">${r[f] && String(r[f]).startsWith('http')
-                      ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--accent);">✓</a>`
-                      : '<span style="color:var(--text-faint);">–</span>'}</td>`
-                  ).join('')}
-                </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-          <button class="primary" onclick="submitAssetsUpload(${JSON.stringify(validRows).replace(/"/g,'&quot;')})">
-            ✓ Upload Assets for ${validRows.length} Model(s)
-          </button>
-          <button class="ghost" style="margin-left:8px;" onclick="document.getElementById('assetsPreview').innerHTML=''; document.getElementById('assetsUploadStatus').innerHTML='';">Cancel</button>
-        `;
-      } catch(err) {
-        status.innerHTML = `<div class="notice danger">Parse error: ${escapeHtml(err.message)}</div>`;
       }
-    };
-    reader.onerror = () => { status.innerHTML = `<div class="notice danger">File read failed — try again.</div>`; };
-    reader.readAsArrayBuffer(file);
-  } catch(e) {
-    status.innerHTML = `<div class="notice danger">Error: ${escapeHtml(e.message)}</div>`;
-  }
+
+      const rows = [];
+      for (let i = dataStart; i < raw.length; i++) {
+        const r = raw[i];
+        if (!r) continue;
+        const model = String(r[COLS.model] || '').trim();
+        if (!model || model.startsWith('⬇') || model === 'Model Name *') continue;
+
+        const obj = { model };
+        Object.entries(COLS).forEach(([key, ci]) => {
+          if (key === 'model') return;
+          const val = r[ci];
+          obj[key] = (val !== null && val !== undefined) ? String(val).trim() : '';
+        });
+        rows.push(obj);
+      }
+
+      const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
+      const validRows = rows.filter(r => r.model && urlFields.some(f => r[f] && r[f].startsWith('http')));
+
+      if (!validRows.length) {
+        status.innerHTML = `<div class="notice danger">No rows with valid URLs found after parsing ${rows.length} row(s). Check that URLs start with https://</div>`;
+        return;
+      }
+
+      status.innerHTML = `<div class="notice">${validRows.length} model(s) with valid URLs found. Review below.</div>`;
+      preview.innerHTML = `
+        <div class="table-wrap" style="max-height:320px; overflow-y:auto; margin-bottom:12px;">
+          <table>
+            <thead><tr><th>Model</th><th>Site</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YT</th><th>X</th><th>IG</th><th>FB</th></tr></thead>
+            <tbody>
+              ${validRows.map(r => `<tr>
+                <td style="font-weight:500; font-size:11px;">${escapeHtml(r.model)}</td>
+                ${urlFields.map(f => `<td style="font-size:10px; text-align:center;">${r[f] && r[f].startsWith('http')
+                  ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--pos);">✓</a>`
+                  : '<span style="color:var(--border);">–</span>'}</td>`).join('')}
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <button class="primary" onclick="submitAssetsUpload(${JSON.stringify(validRows).replace(/"/g,'&quot;')})">
+          ✓ Upload Assets for ${validRows.length} Model(s)
+        </button>
+        <button class="ghost" style="margin-left:8px;" onclick="document.getElementById('assetsPreview').innerHTML=''; document.getElementById('assetsUploadStatus').innerHTML='';">Cancel</button>
+      `;
+    } catch(err) {
+      status.innerHTML = `<div class="notice danger">Parse error: ${escapeHtml(err.message)}</div>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 async function submitAssetsUpload(rows) {
