@@ -51,6 +51,69 @@ module.exports = async (req, res) => {
       return res.status(200).json({ success: true, updated: results.length, errors, message: `${results.length} rating(s) updated.` });
     }
 
+    if (action === 'bulk-variants') {
+      // POST /api/prices?action=bulk-variants
+      // Body: { rows: [{model, variants: [{ram, rom, launch_price, current_price}]}] }
+      const { rows } = req.body || {};
+      if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows required.' });
+
+      const { data: models } = await supabase.from('models').select('model_id, model, launch_price_inr');
+      const modelMap = {};
+      (models || []).forEach(m => { modelMap[m.model.toLowerCase().trim()] = m; });
+
+      const results = [], errors = [];
+
+      for (const row of rows) {
+        const modelName = String(row.model || '').trim();
+        const modelData = modelMap[modelName.toLowerCase()];
+        if (!modelData) { errors.push(`Model not found: "${modelName}"`); continue; }
+
+        const validVariants = (row.variants || []).filter(v => v.ram && v.rom && (v.launch_price || v.current_price));
+        if (!validVariants.length) continue;
+
+        // build variant_prices object
+        const existing = {};
+        const { data: curr } = await supabase.from('models').select('variant_prices, base_variant').eq('model_id', modelData.model_id).single();
+        Object.assign(existing, curr?.variant_prices || {});
+
+        validVariants.forEach(v => {
+          const label = `${v.ram}/${v.rom}`;
+          existing[label] = {
+            launch: v.launch_price ? parseFloat(v.launch_price) : (existing[label]?.launch || null),
+            current: v.current_price ? parseFloat(v.current_price) : (existing[label]?.current || null),
+          };
+        });
+
+        // base = cheapest launch variant
+        const sorted = Object.entries(existing).sort((a,b) => (a[1].launch||999999)-(b[1].launch||999999));
+        const base_variant = curr?.base_variant || (sorted[0]?.[0] || null);
+        const baseLaunch = sorted[0]?.[1]?.launch;
+
+        const updateData = { variant_prices: existing };
+        if (!curr?.base_variant && base_variant) updateData.base_variant = base_variant;
+        if (baseLaunch) updateData.launch_price_inr = baseLaunch;
+
+        await supabase.from('models').update(updateData).eq('model_id', modelData.model_id);
+
+        // price history for current prices
+        for (const [label, prices] of Object.entries(existing)) {
+          if (prices.current) {
+            await supabase.from('price_history').insert({
+              model_id: modelData.model_id, price: prices.current,
+              source: 'bulk_upload', noted_date: today,
+            }).then(() => {}).catch(() => {});
+          }
+        }
+
+        results.push({ model: modelName, variants: Object.keys(existing).length });
+      }
+
+      return res.status(200).json({
+        success: true, updated: results.length, errors,
+        message: `${results.length} model(s) updated with variant prices.${errors.length ? ` ${errors.length} skipped.` : ''}`,
+      });
+    }
+
     if (action === 'variant') {
       // POST /api/prices?action=variant
       // Body: { model_id, variant_label, launch_price, current_price }
