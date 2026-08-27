@@ -178,6 +178,21 @@ function renderAdminView() {
     <!-- VARIANT PRICING -->
     <div id="variantPricingSection"></div>
 
+    <!-- MARKETING ASSETS BULK UPLOAD -->
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-title" style="margin-bottom:4px;">🎨 Bulk Upload Marketing Assets via Excel</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">Upload Official Website, KV1-3 image URLs, YouTube, X, Instagram, Facebook links for multiple models at once.</div>
+      <div id="assetsUploadStatus"></div>
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+        <input type="file" id="assetsXlsx" accept=".xlsx,.xls" style="font-size:12px; color:var(--text-dim);">
+        <button class="small primary" onclick="parseAssetsXlsx()">Preview</button>
+      </div>
+      <div style="font-size:11px; color:var(--text-faint); margin-bottom:8px;">
+        📌 For KV images: Upload to <b>Supabase Storage → marketing-assets bucket</b> first, then paste the public URL in Excel.
+      </div>
+      <div id="assetsPreview"></div>
+    </div>
+
     <!-- PRICE UPDATE (single model) -->
     <div class="panel">
       <div class="panel-title" style="margin-bottom:16px;">💰 Update Current Price (Single Model)</div>
@@ -647,5 +662,70 @@ async function submitVariantPrice() {
     if (phone) { phone.variant_prices = result.variant_prices; loadExistingVariants(model_id); }
   } catch(e) {
     statusEl.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── Marketing Assets Excel Upload ──
+const ASSETS_COLUMNS = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
+
+async function parseAssetsXlsx() {
+  const file = document.getElementById('assetsXlsx').files[0];
+  if (!file) { alert('Please select an Excel file first.'); return; }
+  const status  = document.getElementById('assetsUploadStatus');
+  const preview = document.getElementById('assetsPreview');
+  status.innerHTML = `<div class="notice"><span class="spinner"></span> Parsing...</div>`;
+  preview.innerHTML = '';
+
+  try {
+    const rows = await parseXlsxFile(file, ASSETS_COLUMNS);
+    if (!rows.length) { status.innerHTML = `<div class="notice danger">No data rows found.</div>`; return; }
+
+    // count total URLs per row
+    const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
+    const validRows = rows.filter(r => r.model && urlFields.some(f => r[f] && String(r[f]).startsWith('http')));
+
+    status.innerHTML = `<div class="notice">${validRows.length} model(s) with valid URLs found. Review below.</div>`;
+    preview.innerHTML = `
+      <div class="table-wrap" style="max-height:320px; overflow-y:auto; margin-bottom:12px;">
+        <table>
+          <thead><tr><th>Model</th><th>Website</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YouTube</th><th>X</th><th>IG</th><th>FB</th><th>Notes</th></tr></thead>
+          <tbody>
+            ${validRows.map(r => `<tr>
+              <td style="font-weight:500;">${escapeHtml(r.model)}</td>
+              ${['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'].map(f =>
+                `<td style="font-size:10px;">${r[f] && String(r[f]).startsWith('http')
+                  ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--accent);">✓ Link</a>`
+                  : '<span style="color:var(--text-faint);">–</span>'}</td>`
+              ).join('')}
+              <td style="font-size:10px; color:var(--text-faint);">${escapeHtml(r.notes||'')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <button class="primary" onclick="submitAssetsUpload(${JSON.stringify(validRows).replace(/"/g,'&quot;')})">
+        ✓ Upload Assets for ${validRows.length} Model(s)
+      </button>
+      <button class="ghost" style="margin-left:8px;" onclick="document.getElementById('assetsPreview').innerHTML=''; document.getElementById('assetsUploadStatus').innerHTML='';">Cancel</button>
+    `;
+  } catch(e) {
+    status.innerHTML = `<div class="notice danger">Parse error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function submitAssetsUpload(rows) {
+  const status = document.getElementById('assetsUploadStatus');
+  status.innerHTML = `<div class="notice"><span class="spinner"></span> Uploading assets for ${rows.length} models...</div>`;
+  try {
+    const result = await apiPost('/api/prices?action=assets', { rows });
+    status.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
+    if (result.errors?.length) {
+      status.innerHTML += `<div class="notice danger" style="margin-top:6px;">${result.errors.map(e => escapeHtml(e)).join('<br>')}</div>`;
+    }
+    document.getElementById('assetsPreview').innerHTML = '';
+    // refresh data
+    const fresh = await apiGet('/api/data');
+    STATE.marketingAssets = fresh.marketingAssets;
+  } catch(e) {
+    status.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
   }
 }
