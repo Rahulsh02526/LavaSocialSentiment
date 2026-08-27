@@ -792,7 +792,7 @@ async function parsePricingXlsx() {
         <div class="table-wrap" style="max-height:360px; overflow-y:auto; margin-bottom:12px;">
           <table>
             <thead>
-              <tr><th>Model</th><th>Variant</th><th class="num">Launch ₹</th><th class="num">Current ₹</th><th>Discount</th></tr>
+              <tr><th>Model</th><th>Variant</th><th class="num">Launch ₹</th><th class="num">Current ₹</th><th>Difference</th></tr>
             </thead>
             <tbody>
               ${rows.flatMap(r => r.variants.map((v,vi) => `
@@ -801,7 +801,13 @@ async function parsePricingXlsx() {
                   <td style="font-size:11px;">${escapeHtml(v.ram)}/${escapeHtml(v.rom)}</td>
                   <td class="num">${v.launch_price ? '₹'+v.launch_price.toLocaleString('en-IN') : '–'}</td>
                   <td class="num" style="color:var(--pos);">${v.current_price ? '₹'+v.current_price.toLocaleString('en-IN') : '–'}</td>
-                  <td style="font-size:11px; color:var(--pos);">${v.launch_price && v.current_price ? Math.round((1-v.current_price/v.launch_price)*100)+'% off' : '–'}</td>
+                  <td style="font-size:11px;">${(() => {
+                    if (!v.launch_price || !v.current_price) return '–';
+                    const diff = v.current_price - v.launch_price;
+                    const color = diff > 0 ? 'var(--neg)' : diff < 0 ? 'var(--pos)' : 'var(--text-faint)';
+                    const sign = diff > 0 ? '+' : '';
+                    return '<span style="color:'+color+'">'+sign+diff.toLocaleString('en-IN')+'</span>';
+                  })()}</td>
                 </tr>`
               )).join('')}
             </tbody>
