@@ -87,7 +87,64 @@ module.exports = async (req, res) => {
       });
     }
 
-    return res.status(400).json({ error: `Unknown action: ${action}` });
+    if (action === 'assets') {
+      // POST /api/prices?action=assets
+      // Body: { rows: [{model, official_website, kv1, kv2, kv3, youtube, x_twitter, instagram, facebook, notes}] }
+      const { rows } = req.body || {};
+      if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows array required.' });
+
+      const { data: models } = await supabase.from('models').select('model_id, model');
+      const modelMap = {};
+      (models || []).forEach(m => { modelMap[m.model.toLowerCase().trim()] = m.model_id; });
+
+      const results = [], errors = [];
+
+      for (const row of rows) {
+        const modelName = String(row.model || '').trim();
+        const model_id = modelMap[modelName.toLowerCase()];
+        if (!model_id) { errors.push(`Model not found: "${modelName}"`); continue; }
+
+        const assetTypes = [
+          { type: 'website',   platform: 'brand_site',  url: row.official_website, campaign_name: 'Official Website' },
+          { type: 'kv',        platform: 'print_digital', url: row.kv1, campaign_name: 'KV 1' },
+          { type: 'kv',        platform: 'print_digital', url: row.kv2, campaign_name: 'KV 2' },
+          { type: 'kv',        platform: 'print_digital', url: row.kv3, campaign_name: 'KV 3' },
+          { type: 'video',     platform: 'YouTube',       url: row.youtube, campaign_name: 'Official YouTube' },
+          { type: 'post',      platform: 'X',             url: row.x_twitter, campaign_name: 'X / Twitter' },
+          { type: 'post',      platform: 'Instagram',     url: row.instagram, campaign_name: 'Instagram' },
+          { type: 'post',      platform: 'Facebook',      url: row.facebook, campaign_name: 'Facebook' },
+        ].filter(a => a.url && String(a.url).trim().startsWith('http'));
+
+        if (!assetTypes.length) { errors.push(`No valid URLs for "\${modelName}"`); continue; }
+
+        const toInsert = assetTypes.map(a => ({
+          model_id,
+          type: a.type,
+          platform: a.platform,
+          campaign_name: a.campaign_name,
+          url: String(a.url).trim(),
+          notes: row.notes || null,
+          tags: [],
+        }));
+
+        // upsert — avoid duplicates by url
+        for (const asset of toInsert) {
+          const { data: existing } = await supabase.from('marketing_assets').select('id').eq('model_id', model_id).eq('url', asset.url).single();
+          if (!existing) await supabase.from('marketing_assets').insert(asset);
+        }
+
+        results.push({ model: modelName, assets_added: toInsert.length });
+      }
+
+      return res.status(200).json({
+        success: true,
+        processed: results.length,
+        errors,
+        message: `\${results.map(r => r.assets_added).reduce((a,b)=>a+b,0)} assets added across \${results.length} models.`,
+      });
+    }
+
+    return res.status(400).json({ error: `Unknown action: \${action}` });
   } catch (e) {
     console.error('prices.js failed:', e);
     return res.status(500).json({ error: e.message });
