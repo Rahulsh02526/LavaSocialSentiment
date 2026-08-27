@@ -11,10 +11,23 @@ let productLabState = {
 function renderProductLabView() {
   const el = document.getElementById('view-product-lab');
   el.innerHTML = `
+    <!-- TAB SWITCHER -->
+    <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:20px; width:360px;">
+      <button id="ideationTabProduct" onclick="switchIdeationTab('product')"
+        style="flex:1; padding:9px 16px; font-size:13px; font-weight:600; background:var(--accent); color:#fff; border:none; cursor:pointer;">
+        🔧 Product Ideation
+      </button>
+      <button id="ideationTabMarketing" onclick="switchIdeationTab('marketing')"
+        style="flex:1; padding:9px 16px; font-size:13px; font-weight:600; background:var(--panel); color:var(--text-dim); border:none; cursor:pointer; border-left:1px solid var(--border);">
+        🎯 Marketing Ideation
+      </button>
+    </div>
+
+    <div id="ideationProductPanel">
     <div class="section-head">
       <div>
-        <div class="section-title">Product Lab</div>
-        <div class="section-sub">Enter a target price — platform tells you what wins in that segment based on live consumer data</div>
+        <div class="section-title">Ideation Lab</div>
+        <div class="section-sub">Product team: enter price/specs to find what wins. Marketing team: get positioning options based on consumer data and competitor messaging.</div>
       </div>
     </div>
 
@@ -71,13 +84,27 @@ function renderProductLabView() {
 
     <!-- RESULTS -->
     <div id="pl_results"></div>
+    </div><!-- /ideationProductPanel -->
+
+    <div id="ideationMarketingPanel" style="display:none;">
+      <div id="marketingInner"></div>
+    </div>
   `;
 
   updateSegmentBadge();
+  if (productLabState.result) renderProductLabResults(productLabState.result);
 
-  // restore previous result if any
-  if (productLabState.result) {
-    renderProductLabResults(productLabState.result);
+  // render marketing panel content
+  const mInner = document.getElementById('marketingInner');
+  if (mInner) {
+    mInner.innerHTML = renderMarketingIdeationPanel() + renderPositioningSection() + renderKVAnalysisSection();
+  }
+  if (positioningState.result) {
+    const r = document.getElementById('pos_results');
+    if (r) renderPositioningResults(positioningState.result, r);
+  }
+  if (positioningState.result) {
+    renderPositioningResults(positioningState.result, document.getElementById('pos_results'));
   }
 }
 
@@ -303,4 +330,280 @@ function renderProductLabResults(data) {
 // helper — already defined in app_core.js but guard for safety
 if (typeof goToModel === 'undefined') {
   function goToModel(modelId) { switchView('model', modelId); }
+}
+
+// ══════════════════════════════════════════════
+// BRAND POSITIONING SUGGESTER
+// ══════════════════════════════════════════════
+
+let positioningState = { result: null };
+
+function renderPositioningSection() {
+  return `
+    <div class="panel" style="margin-top:24px;">
+      <div class="panel-title" style="margin-bottom:4px;">🎯 Brand Positioning Suggester</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:16px;">Enter product details — platform scans competitor messaging, finds gaps, and suggests positioning options</div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:14px; margin-bottom:14px;">
+        <div class="field">
+          <label>Model Name</label>
+          <input type="text" id="pos_model" placeholder="e.g. Lava Bold 3 5G">
+        </div>
+        <div class="field">
+          <label>Target Price (₹) *</label>
+          <input type="number" id="pos_price" placeholder="e.g. 15999">
+        </div>
+        <div class="field">
+          <label>Platform</label>
+          <select id="pos_platform">
+            <option value="Online">Online</option>
+            <option value="Offline">Offline</option>
+            <option value="Both">Both</option>
+          </select>
+        </div>
+        <div style="display:flex; align-items:flex-end; padding-bottom:1px;">
+          <button class="primary" style="width:100%;" onclick="runPositioningSuggester()">Get Positioning →</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px; font-weight:600; color:var(--text-faint); cursor:pointer; display:flex; align-items:center; gap:6px;" onclick="togglePosSpecs()">
+          <span id="posSpecsArrow">▶</span>
+          <span>Add Specs for sharper recommendations (optional)</span>
+        </div>
+        <div id="posSpecsPanel" style="display:none; margin-top:10px;">
+          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:10px;">
+            <div class="field"><label>Processor</label><input type="text" id="pos_processor" placeholder="e.g. Dimensity 7400"></div>
+            <div class="field"><label>Battery (mAh)</label><input type="number" id="pos_battery" placeholder="e.g. 5500"></div>
+            <div class="field"><label>Display</label><input type="text" id="pos_display" placeholder="e.g. 6.67in FHD+ AMOLED"></div>
+            <div class="field"><label>Camera</label><input type="text" id="pos_camera" placeholder="e.g. 50MP Sony IMX752"></div>
+            <div class="field"><label>Key Feature</label><input type="text" id="pos_feature" placeholder="e.g. Stock Android, IP68"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="pos_status"></div>
+      <div id="pos_results"></div>
+    </div>
+  `;
+}
+
+function togglePosSpecs() {
+  const panel = document.getElementById('posSpecsPanel');
+  const arrow = document.getElementById('posSpecsArrow');
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  arrow.textContent = open ? '▶' : '▼';
+}
+
+async function runPositioningSuggester() {
+  const price = parseFloat(document.getElementById('pos_price')?.value || 0);
+  if (!price || price < 1000) { alert('Please enter a valid target price.'); return; }
+
+  const specs = {};
+  const fields = { pos_processor: 'processor', pos_battery: 'battery_mah', pos_display: 'display', pos_camera: 'rear_camera', pos_feature: 'key_feature' };
+  Object.entries(fields).forEach(([id, key]) => {
+    const val = document.getElementById(id)?.value?.trim();
+    if (val) specs[key] = val;
+  });
+
+  const statusEl = document.getElementById('pos_status');
+  const resultsEl = document.getElementById('pos_results');
+  statusEl.innerHTML = `<div class="notice"><span class="spinner"></span> Scanning competitor messaging and finding positioning gaps…</div>`;
+  resultsEl.innerHTML = '';
+
+  try {
+    const data = await apiPost('/api/product-suggester?action=positioning', {
+      model_name:     document.getElementById('pos_model')?.value?.trim() || 'New LAVA Model',
+      target_price:   price,
+      specs:          Object.keys(specs).length ? specs : null,
+      platform_focus: document.getElementById('pos_platform')?.value || 'Online',
+      brand:          'LAVA',
+    });
+
+    positioningState.result = data;
+    statusEl.innerHTML = '';
+    renderPositioningResults(data, resultsEl);
+  } catch (e) {
+    statusEl.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderPositioningResults(data, el) {
+  const { price_band, competitors, gaps, positioning, total_comments_analysed } = data;
+
+  // parse positioning markdown into styled sections
+  const fmtPositioning = (positioning || '')
+    .replace(/## OPTION ([A-C]): (.+)/g, (_, letter, title) =>
+      `<div style="margin-top:16px; padding:14px 16px; background:var(--panel-2); border-radius:8px; border-left:3px solid var(--accent);">
+        <div style="font-size:10px; font-weight:700; color:var(--accent); letter-spacing:0.1em; margin-bottom:6px;">OPTION ${letter}</div>
+        <div style="font-size:14px; font-weight:700; margin-bottom:10px; color:var(--text);">${title}</div>`)
+    .replace(/## RECOMMENDED: (.+)/g,
+      `</div><div style="margin-top:16px; padding:14px 16px; background:rgba(34,197,94,0.08); border-radius:8px; border-left:3px solid var(--pos);">
+        <div style="font-size:10px; font-weight:700; color:var(--pos); letter-spacing:0.1em; margin-bottom:6px;">⭐ RECOMMENDED</div>
+        <div style="font-size:13px; font-weight:600; color:var(--pos); margin-bottom:8px;">$1</div>`)
+    .replace(/## WHAT TO AVOID/g,
+      `</div><div style="margin-top:16px; padding:14px 16px; background:rgba(200,16,46,0.06); border-radius:8px; border-left:3px solid var(--neg);">
+        <div style="font-size:10px; font-weight:700; color:var(--neg); letter-spacing:0.1em; margin-bottom:8px;">⚠ WHAT TO AVOID</div>`)
+    .replace(/\*\*Tagline:\*\* "(.+?)"/g, `<div style="font-size:16px; font-style:italic; color:var(--pos); margin:6px 0 10px; font-weight:600;">"$1"</div>`)
+    .replace(/\*\*(.+?):\*\*/g, `<span style="font-weight:700; color:var(--text);">$1:</span>`)
+    .replace(/\n/g, '<br>');
+
+  el.innerHTML = `
+    <!-- META -->
+    <div style="display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">
+      <span style="font-size:12px; font-weight:600;">₹${price_band.low.toLocaleString('en-IN')} – ₹${price_band.high.toLocaleString('en-IN')} band</span>
+      <span class="badge gray">${competitors.length} competitors scanned</span>
+      <span class="badge gray">${total_comments_analysed.toLocaleString('en-IN')} comments analysed</span>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+
+      <!-- POSITIONING OPTIONS -->
+      <div>
+        <div style="font-size:11px; font-weight:700; color:var(--text-faint); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:4px;">Positioning Options</div>
+        <div style="font-size:13px; line-height:1.7; color:var(--text-dim);">${fmtPositioning}</div>
+      </div>
+
+      <!-- GAPS + COMPETITOR SCAN -->
+      <div>
+        <div style="font-size:11px; font-weight:700; color:var(--text-faint); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">Consumer Sentiment Gaps</div>
+        ${gaps.slice(0,6).map(g => `
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:7px;">
+            <div style="width:110px; font-size:12px; flex-shrink:0; color:${g.is_gap ? 'var(--neg)' : 'var(--text-dim)'}; font-weight:${g.is_gap ? '600' : '400'};">${g.label}${g.is_gap ? ' ⚡' : ''}</div>
+            <div style="flex:1; height:5px; background:var(--panel-2); border-radius:3px; overflow:hidden;">
+              <div style="height:100%; width:${g.positivity ?? 0}%; background:${(g.positivity||0) >= 65 ? 'var(--pos)' : (g.positivity||0) >= 40 ? 'var(--neu)' : 'var(--neg)'}; border-radius:3px;"></div>
+            </div>
+            <div style="font-size:11px; font-weight:600; width:36px; color:${(g.positivity||0) >= 65 ? 'var(--pos)' : (g.positivity||0) >= 40 ? 'var(--neu)' : 'var(--neg)'};">${g.positivity ?? '?'}%</div>
+            <div style="font-size:10px; color:var(--text-faint); width:60px;">${g.mentions} mentions</div>
+          </div>`).join('')}
+        <div style="font-size:10px; color:var(--text-faint); margin-top:4px;">⚡ = high frustration gap = messaging opportunity</div>
+
+        <div style="margin-top:14px;">
+          <div style="font-size:11px; font-weight:700; color:var(--text-faint); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px;">Competitor Official Messaging</div>
+          ${competitors.filter(c => c.official_video_title).slice(0,5).map(c => `
+            <div style="margin-bottom:6px; padding:6px 10px; background:var(--panel-2); border-radius:5px;">
+              <div style="font-size:10px; color:var(--text-faint); margin-bottom:2px;">${c.brand} · ₹${(c.price||0).toLocaleString('en-IN')}</div>
+              <div style="font-size:11px; color:var(--text-dim);">${escapeHtml(c.official_video_title||'')}</div>
+            </div>`).join('') || '<div style="font-size:11px; color:var(--text-faint);">No official video messaging data available yet</div>'}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ── TAB SWITCHER ──
+function switchIdeationTab(tab) {
+  const productPanel   = document.getElementById('ideationProductPanel');
+  const marketingPanel = document.getElementById('ideationMarketingPanel');
+  const productBtn     = document.getElementById('ideationTabProduct');
+  const marketingBtn   = document.getElementById('ideationTabMarketing');
+
+  if (tab === 'product') {
+    if (productPanel)   productPanel.style.display   = 'block';
+    if (marketingPanel) marketingPanel.style.display = 'none';
+    if (productBtn)   { productBtn.style.background   = 'var(--accent)'; productBtn.style.color   = '#fff'; }
+    if (marketingBtn) { marketingBtn.style.background = 'var(--panel)';  marketingBtn.style.color = 'var(--text-dim)'; }
+  } else {
+    if (productPanel)   productPanel.style.display   = 'none';
+    if (marketingPanel) marketingPanel.style.display = 'block';
+    if (marketingBtn) { marketingBtn.style.background = 'var(--accent)'; marketingBtn.style.color   = '#fff'; }
+    if (productBtn)   { productBtn.style.background   = 'var(--panel)';  productBtn.style.color = 'var(--text-dim)'; }
+  }
+}
+
+function renderMarketingIdeationPanel() {
+  return `
+    <div class="section-head">
+      <div>
+        <div class="section-title">Marketing Ideation</div>
+        <div class="section-sub">Get positioning options based on consumer data · Analyse competitor KVs for messaging intelligence</div>
+      </div>
+    </div>
+  `;
+}
+
+// ── KV VISION ANALYSIS ──
+function renderKVAnalysisSection() {
+  return `
+    <div class="panel" style="margin-top:20px;">
+      <div class="panel-title" style="margin-bottom:4px;">🖼 KV / Creative Analysis</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:16px;">
+        Paste a KV image URL (from Supabase Storage or any public URL) — AI will analyse the creative's positioning, messaging, emotion, and what it communicates to consumers.
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 200px auto; gap:12px; align-items:flex-end; margin-bottom:12px;">
+        <div class="field" style="margin:0;">
+          <label>KV / Creative Image URL</label>
+          <input type="text" id="kv_url" placeholder="https://...supabase.co/.../hmd-vibe-2-kv1.png">
+        </div>
+        <div class="field" style="margin:0;">
+          <label>Brand / Model (optional)</label>
+          <input type="text" id="kv_brand" placeholder="e.g. HMD Vibe 2 5G">
+        </div>
+        <button class="primary" style="margin-bottom:1px;" onclick="runKVAnalysis()">Analyse →</button>
+      </div>
+
+      <!-- Quick load from existing assets -->
+      <div style="font-size:11px; color:var(--text-faint); margin-bottom:12px;">
+        Or pick from mapped assets:
+        <select id="kv_assetPicker" onchange="loadKVFromAssets()" style="margin-left:8px; font-size:11px;">
+          <option value="">Select a model's KV...</option>
+          ${(STATE.phones || []).flatMap(p => {
+            const assets = (STATE.marketingAssets?.[p.model_id] || []).filter(a => a.type === 'kv' && a.url);
+            return assets.map(a => `<option value="${escapeHtml(a.url)}|${escapeHtml(p.model)}">${p.model} — ${a.campaign_name||'KV'}</option>`);
+          }).join('')}
+        </select>
+      </div>
+
+      <div id="kv_status"></div>
+      <div id="kv_results"></div>
+    </div>
+  `;
+}
+
+function loadKVFromAssets() {
+  const picker = document.getElementById('kv_assetPicker');
+  const val = picker?.value;
+  if (!val) return;
+  const [url, model] = val.split('|');
+  const urlInput   = document.getElementById('kv_url');
+  const brandInput = document.getElementById('kv_brand');
+  if (urlInput)   urlInput.value   = url;
+  if (brandInput) brandInput.value = model;
+}
+
+async function runKVAnalysis() {
+  const url   = document.getElementById('kv_url')?.value?.trim();
+  const brand = document.getElementById('kv_brand')?.value?.trim();
+  const statusEl  = document.getElementById('kv_status');
+  const resultsEl = document.getElementById('kv_results');
+
+  if (!url || !url.startsWith('http')) { alert('Please paste a valid image URL starting with https://'); return; }
+
+  statusEl.innerHTML  = `<div class="notice"><span class="spinner"></span> Analysing creative with AI vision...</div>`;
+  resultsEl.innerHTML = '';
+
+  try {
+    const data = await apiPost('/api/product-suggester?action=kv-analysis', { url, brand });
+    statusEl.innerHTML = '';
+    resultsEl.innerHTML = `
+      <div style="display:grid; grid-template-columns:280px 1fr; gap:16px; margin-top:12px;">
+        <div>
+          <img src="${escapeHtml(url)}" alt="KV" style="width:100%; border-radius:8px; border:1px solid var(--border);"
+            onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+          <div style="display:none; padding:20px; text-align:center; color:var(--text-faint); font-size:12px; background:var(--panel-2); border-radius:8px;">Could not load image</div>
+          ${brand ? `<div style="font-size:11px; color:var(--text-faint); margin-top:6px; text-align:center;">${escapeHtml(brand)}</div>` : ''}
+        </div>
+        <div class="panel" style="margin:0;">
+          <div class="panel-title" style="margin-bottom:12px; color:var(--accent);">🎯 AI Creative Analysis</div>
+          <div style="font-size:13px; line-height:1.75; color:var(--text-dim);">
+            ${(data.analysis || '').replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text);">$1</strong>').replace(/\n/g, '<br>')}
+          </div>
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    statusEl.innerHTML = `<div class="notice danger">Analysis failed: ${escapeHtml(e.message)}</div>`;
+  }
 }
