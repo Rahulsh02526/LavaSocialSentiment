@@ -175,6 +175,19 @@ function renderAdminView() {
       <div id="ratingsPreview"></div>
     </div>
 
+    <!-- BULK PRICING UPLOAD -->
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-title" style="margin-bottom:4px;">💰 Bulk Upload Variant Prices via Excel</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">Upload the SIP Pricing Update Template — up to 3 variants (RAM/ROM + Launch + Current Price) per model.</div>
+      <div id="pricingUploadStatus"></div>
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <input type="file" id="pricingXlsx" accept=".xlsx,.xls" style="font-size:12px; color:var(--text-dim);">
+        <button class="small primary" onclick="parsePricingXlsx()">Preview</button>
+      </div>
+      <div style="font-size:11px; color:var(--text-faint);">Format: Model Name · Variant 1 (RAM/ROM/Launch/Current) · Variant 2 · Variant 3</div>
+      <div id="pricingPreview" style="margin-top:12px;"></div>
+    </div>
+
     <!-- VARIANT PRICING -->
     <div id="variantPricingSection"></div>
 
@@ -725,6 +738,100 @@ async function submitAssetsUpload(rows) {
     // refresh data
     const fresh = await apiGet('/api/data');
     STATE.marketingAssets = fresh.marketingAssets;
+  } catch(e) {
+    status.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── Bulk Pricing Upload ──
+async function parsePricingXlsx() {
+  const file = document.getElementById('pricingXlsx').files[0];
+  if (!file) { alert('Please select an Excel file first.'); return; }
+  const status  = document.getElementById('pricingUploadStatus');
+  const preview = document.getElementById('pricingPreview');
+  status.innerHTML = `<div class="notice"><span class="spinner"></span> Parsing...</div>`;
+  preview.innerHTML = '';
+
+  try {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      // find data rows — skip instruction row (row 0), header rows (rows 1,2), start from row 3
+      const rows = [];
+      for (let i = 3; i < raw.length; i++) {
+        const r = raw[i];
+        const model = String(r[0]||'').trim();
+        if (!model || model.startsWith('⬇')) continue;
+
+        const variants = [];
+        for (let vi = 0; vi < 3; vi++) {
+          const base = 1 + vi*4;
+          const ram = String(r[base]||'').trim();
+          const rom = String(r[base+1]||'').trim();
+          const launch  = r[base+2] ? parseFloat(r[base+2]) : null;
+          const current = r[base+3] ? parseFloat(r[base+3]) : null;
+          if (ram && rom && (launch || current)) {
+            variants.push({ ram, rom, launch_price: launch, current_price: current });
+          }
+        }
+        if (variants.length) rows.push({ model, variants });
+      }
+
+      if (!rows.length) {
+        status.innerHTML = `<div class="notice danger">No data rows found. Make sure prices are filled in.</div>`;
+        return;
+      }
+
+      const totalVariants = rows.reduce((s, r) => s + r.variants.length, 0);
+      status.innerHTML = `<div class="notice">${rows.length} model(s) with ${totalVariants} variant(s) ready. Review below.</div>`;
+
+      preview.innerHTML = `
+        <div class="table-wrap" style="max-height:360px; overflow-y:auto; margin-bottom:12px;">
+          <table>
+            <thead>
+              <tr><th>Model</th><th>Variant</th><th class="num">Launch ₹</th><th class="num">Current ₹</th><th>Discount</th></tr>
+            </thead>
+            <tbody>
+              ${rows.flatMap(r => r.variants.map((v,vi) => `
+                <tr>
+                  ${vi===0 ? `<td rowspan="${r.variants.length}" style="font-weight:500; vertical-align:top; padding-top:8px;">${escapeHtml(r.model)}</td>` : ''}
+                  <td style="font-size:11px;">${escapeHtml(v.ram)}/${escapeHtml(v.rom)}</td>
+                  <td class="num">${v.launch_price ? '₹'+v.launch_price.toLocaleString('en-IN') : '–'}</td>
+                  <td class="num" style="color:var(--pos);">${v.current_price ? '₹'+v.current_price.toLocaleString('en-IN') : '–'}</td>
+                  <td style="font-size:11px; color:var(--pos);">${v.launch_price && v.current_price ? Math.round((1-v.current_price/v.launch_price)*100)+'% off' : '–'}</td>
+                </tr>`
+              )).join('')}
+            </tbody>
+          </table>
+        </div>
+        <button class="primary" onclick="submitPricingUpload(${JSON.stringify(rows).replace(/"/g,'&quot;')})">
+          ✓ Upload Prices for ${rows.length} Model(s)
+        </button>
+        <button class="ghost" style="margin-left:8px;" onclick="document.getElementById('pricingPreview').innerHTML=''; document.getElementById('pricingUploadStatus').innerHTML='';">Cancel</button>
+      `;
+    };
+    reader.readAsArrayBuffer(file);
+  } catch(e) {
+    status.innerHTML = `<div class="notice danger">Parse error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function submitPricingUpload(rows) {
+  const status = document.getElementById('pricingUploadStatus');
+  status.innerHTML = `<div class="notice"><span class="spinner"></span> Uploading prices...</div>`;
+  try {
+    const result = await apiPost('/api/prices?action=bulk-variants', { rows });
+    status.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
+    if (result.errors?.length) {
+      status.innerHTML += `<div class="notice danger" style="margin-top:6px;">${result.errors.map(e => escapeHtml(e)).join('<br>')}</div>`;
+    }
+    document.getElementById('pricingPreview').innerHTML = '';
+    const fresh = await apiGet('/api/data');
+    STATE.phones = fresh.phones;
+    renderTopbar();
   } catch(e) {
     status.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
   }
