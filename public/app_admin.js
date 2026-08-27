@@ -700,12 +700,12 @@ async function parseAssetsXlsx() {
         // find header row — look for 'Model Name' in any of first 3 rows
         let headerRowIdx = -1;
         for (let i = 0; i < Math.min(raw.length, 4); i++) {
-          if (raw[i].some(c => String(c).toLowerCase().includes('model name') || String(c).toLowerCase() === 'model')) {
+          if (raw[i].some(c => String(c||'').toLowerCase().includes('model name') || String(c||'').toLowerCase() === 'model')) {
             headerRowIdx = i;
             break;
           }
         }
-        if (headerRowIdx === -1) headerRowIdx = 1; // fallback: row 2
+        if (headerRowIdx === -1) headerRowIdx = 1; // fallback: row 2 (0-indexed = index 1)
 
         const headers = raw[headerRowIdx].map(h => String(h).toLowerCase().trim()
           .replace(/\s*\*/g,'').replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'_'));
@@ -730,13 +730,17 @@ async function parseAssetsXlsx() {
           const r = raw[i];
           if (!r || r.every(c => c === '' || c === null)) continue;
           const obj = {};
-          colMap.forEach((key, ci) => { if (key) obj[key] = String(r[ci]||'').trim(); });
+          colMap.forEach((key, ci) => {
+            if (!key) return;
+            const val = r[ci];
+            obj[key] = (val === null || val === undefined || val === 'None') ? '' : String(val).trim();
+          });
           if (!obj.model || obj.model.startsWith('⬇')) continue;
           rows.push(obj);
         }
 
         const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
-        const validRows = rows.filter(r => r.model && urlFields.some(f => r[f] && r[f].startsWith('http')));
+        const validRows = rows.filter(r => r.model && r.model !== 'None' && urlFields.some(f => r[f] && String(r[f]).startsWith('http')));
 
         if (!validRows.length) {
           status.innerHTML = `<div class="notice danger">No rows with valid URLs found. Make sure URLs start with https://</div>`;
@@ -752,7 +756,7 @@ async function parseAssetsXlsx() {
                 ${validRows.map(r => `<tr>
                   <td style="font-weight:500;">${escapeHtml(r.model)}</td>
                   ${urlFields.slice(0,8).map(f =>
-                    `<td style="font-size:10px;">${r[f] && r[f].startsWith('http')
+                    `<td style="font-size:10px;">${r[f] && String(r[f]).startsWith('http')
                       ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--accent);">✓</a>`
                       : '<span style="color:var(--text-faint);">–</span>'}</td>`
                   ).join('')}
