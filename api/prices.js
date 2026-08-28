@@ -87,11 +87,13 @@ module.exports = async (req, res) => {
         // base = cheapest launch variant
         const sorted = Object.entries(existing).sort((a,b) => (a[1].launch||999999)-(b[1].launch||999999));
         const base_variant = curr?.base_variant || (sorted[0]?.[0] || null);
-        const baseLaunch = sorted[0]?.[1]?.launch;
+        const baseLaunch   = sorted[0]?.[1]?.launch;
+        const baseCurrent  = sorted[0]?.[1]?.current;
 
         const updateData = { variant_prices: existing };
         if (!curr?.base_variant && base_variant) updateData.base_variant = base_variant;
-        if (baseLaunch) updateData.launch_price_inr = baseLaunch;
+        if (baseLaunch)  updateData.launch_price_inr  = baseLaunch;
+        if (baseCurrent) updateData.current_price_inr = baseCurrent;
 
         await supabase.from('models').update(updateData).eq('model_id', modelData.model_id);
 
