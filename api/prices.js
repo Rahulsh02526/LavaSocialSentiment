@@ -21,7 +21,6 @@ module.exports = async (req, res) => {
       const { data: model } = await supabase.from('models').select('model').eq('model_id', model_id).single();
       await supabase.from('models').update({ current_price_inr: new_price, price_last_updated: today }).eq('model_id', model_id);
       await supabase.from('price_history').insert({ model_id, price: new_price, source: source || 'manual', noted_date: today });
-      const totalAssets = results.reduce((s, r) => s + r.assets_added, 0);
       return res.status(200).json({ success: true, message: `Price updated for "${model?.model}": ₹${new_price}` });
     }
 
@@ -200,6 +199,7 @@ module.exports = async (req, res) => {
         results.push({ model: modelName, assets_added: toInsert.length });
       }
 
+      const totalAssets = results.reduce((s, r) => s + r.assets_added, 0);
       return res.status(200).json({
         success: true,
         processed: results.length,
