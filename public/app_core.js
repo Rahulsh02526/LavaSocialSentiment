@@ -58,7 +58,7 @@ function lifecycleBadge(status) {
   return '<span class="badge gray">?</span>';
 }
 function isFiveG(spec) { return spec && spec.connectivity && !spec.connectivity.includes('4G only'); }
-function getAssetsForModel(modelId) { return STATE.marketingAssets[modelId] || []; }
+function getAssetsForModel(modelId) { return STATE.marketingAssets[parseInt(modelId)] || STATE.marketingAssets[String(modelId)] || []; }
 
 function escapeHtml(str) {
   if (!str) return '';
