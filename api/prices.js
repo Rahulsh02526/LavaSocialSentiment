@@ -190,10 +190,11 @@ module.exports = async (req, res) => {
           tags: [],
         }));
 
-        // upsert — avoid duplicates by url
-        for (const asset of toInsert) {
-          const { data: existing } = await supabase.from('marketing_assets').select('id').eq('model_id', model_id).eq('url', asset.url).single();
-          if (!existing) await supabase.from('marketing_assets').insert(asset);
+        // insert all assets in one batch — delete existing first to avoid duplicates
+        await supabase.from('marketing_assets').delete().eq('model_id', model_id);
+        if (toInsert.length > 0) {
+          const { error: insertErr } = await supabase.from('marketing_assets').insert(toInsert);
+          if (insertErr) { errors.push(`Insert failed for "${modelName}": ${insertErr.message}`); continue; }
         }
 
         results.push({ model: modelName, assets_added: toInsert.length });
