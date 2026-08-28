@@ -769,7 +769,13 @@ async function submitAssetsUpload(rows) {
     window._pendingAssets = null;
     // refresh data
     const fresh = await apiGet('/api/data');
+    STATE.phones = fresh.phones;
     STATE.marketingAssets = fresh.marketingAssets;
+    renderTopbar();
+    // if model deep-dive is open, re-render it
+    if (STATE.currentView === 'model' && STATE.selectedModelId) {
+      renderModelView(STATE.selectedModelId);
+    }
   } catch(e) {
     status.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
   }
