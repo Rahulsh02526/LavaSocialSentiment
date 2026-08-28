@@ -273,19 +273,49 @@ function renderMarketingAssetsBox(modelId) {
       Assets are stored as links only (image/video URLs) — nothing is uploaded or hosted here. Paste a URL from wherever the asset already lives (Drive, YouTube, Instagram, a CDN, etc.).
     </div>
     ${assets.length === 0 ? `<div class="empty-state" style="padding:16px;"><div class="desc">No marketing assets added for this model yet</div></div>` : `
-    <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
-      ${assets.map(a => `
-        <div class="model-card" style="display:flex; justify-content:space-between; align-items:center;">
-          <div style="flex:1;">
-            <div class="model-card-name">${assetTypeIcon(a.type)} ${escapeHtml(a.campaign_name||'Untitled')} <span class="src-badge ${a.platform?.toLowerCase()||''}" style="margin-left:6px;">${escapeHtml(a.platform||'')}</span></div>
-            <div class="model-card-meta">${a.date||'no date'} ${a.tags&&a.tags.length?'· '+a.tags.map(t=>escapeHtml(t)).join(', '):''}</div>
-            <a href="${escapeHtml(a.url)}" target="_blank" style="font-size:11px; word-break:break-all;">${escapeHtml(a.url)}</a>
-            ${a.notes ? `<div style="font-size:11px; color:var(--text-faint); margin-top:4px;">${escapeHtml(a.notes)}</div>` : ''}
+
+    ${/* KV images grid */ assets.filter(a => a.type === 'kv' || /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(a.url||'')).length > 0 ? `
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; margin-bottom:16px;">
+      ${assets.filter(a => a.type === 'kv' || /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(a.url||'')).map(a => `
+        <div style="position:relative;">
+          <div style="font-size:10px; font-weight:600; color:var(--text-faint); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.08em;">${escapeHtml(a.campaign_name||'KV')}</div>
+          <a href="${escapeHtml(a.url)}" target="_blank">
+            <img src="${escapeHtml(a.url)}" alt="${escapeHtml(a.campaign_name||'KV')}"
+              style="width:100%; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--panel-2);"
+              onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div style="display:none; width:100%; height:140px; border-radius:8px; border:1px solid var(--border); background:var(--panel-2); align-items:center; justify-content:center; font-size:11px; color:var(--text-faint);">Could not load</div>
+          </a>
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <a href="${escapeHtml(a.url)}" target="_blank" style="flex:1; text-align:center; font-size:10px; padding:4px; background:var(--panel-2); border-radius:4px; color:var(--text-dim); text-decoration:none;">↗ Open</a>
+            <a href="${escapeHtml(a.url)}" download="${escapeHtml(a.campaign_name||'kv')}.png" style="flex:1; text-align:center; font-size:10px; padding:4px; background:var(--panel-2); border-radius:4px; color:var(--accent); text-decoration:none;">⬇ Download</a>
           </div>
-          <button class="small danger" onclick="${isAdminLoggedIn() ? `removeMarketingAsset(${modelId}, '${a.id}')` : 'promptAdminLoginRedirect()'}">Remove</button>
         </div>
       `).join('')}
-    </div>`}
+    </div>` : ''}
+
+    ${/* Links: website, youtube, social */ assets.filter(a => a.type !== 'kv' && !/\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(a.url||'')).length > 0 ? `
+    <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px;">
+      ${assets.filter(a => a.type !== 'kv' && !/\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(a.url||'')).map(a => {
+        const ytId = a.url ? (a.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/) || [])[1] : null;
+        const ytThumb = ytId ? `https://img.youtube.com/vi/${ytId}/mqdefault.jpg` : null;
+        return `
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--panel-2); border-radius:6px;">
+          ${ytThumb ? `
+            <a href="${escapeHtml(a.url)}" target="_blank" style="flex-shrink:0;">
+              <img src="${ytThumb}" alt="thumbnail"
+                style="width:80px; height:45px; object-fit:cover; border-radius:4px; border:1px solid var(--border);"
+                onerror="this.style.display='none';">
+            </a>` : `<span style="font-size:18px; flex-shrink:0;">${assetTypeIcon(a.type)}</span>`}
+          <div style="flex:1; min-width:0;">
+            <span style="font-size:12px; font-weight:600; color:var(--text);">${escapeHtml(a.campaign_name||'Link')}</span>
+            <span class="src-badge" style="margin-left:6px; font-size:9px;">${escapeHtml(a.platform||'')}</span>
+            <div><a href="${escapeHtml(a.url)}" target="_blank" style="font-size:11px; color:var(--accent); word-break:break-all;">${escapeHtml(a.url)}</a></div>
+          </div>
+          ${isAdminLoggedIn() ? `<button class="small danger" onclick="removeMarketingAsset(${modelId}, '${a.id}')">Remove</button>` : ''}
+        </div>`;
+      }).join('')}
+    </div>` : ''}
+    `}
 
     <button class="small" onclick="${isAdminLoggedIn() ? `toggleAddAssetForm(${modelId})` : 'promptAdminLoginRedirect()'}">${isAdminLoggedIn() ? '+ Add Asset' : 'Admin Login Required'}</button>
     <div id="addAssetForm_${modelId}" style="display:none; margin-top:12px;">
