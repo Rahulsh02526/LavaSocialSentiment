@@ -798,20 +798,33 @@ async function parsePricingXlsx() {
       const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
       // find data rows — skip instruction row (row 0), header rows (rows 1,2), start from row 3
+      // Find data start row — skip header rows (Row 1 = group headers, Row 2 = sub-headers)
+      // Data starts from Row 3 (index 2)
+      let dataStart = 2;
+      for (let i = 0; i < Math.min(raw.length, 4); i++) {
+        const val = String(raw[i]?.[0] || '').trim();
+        // Skip instruction/header rows
+        if (val && val !== 'Model Name *' && !val.startsWith('⬇') && val !== 'None') {
+          dataStart = i; break;
+        }
+      }
+
       const rows = [];
-      for (let i = 3; i < raw.length; i++) {
+      for (let i = dataStart; i < raw.length; i++) {
         const r = raw[i];
-        const model = String(r[0]||'').trim();
-        if (!model || model.startsWith('⬇')) continue;
+        if (!r) continue;
+        const model = String(r[0] || '').trim();
+        if (!model || model === 'None' || model === 'Model Name *' || model.startsWith('⬇')) continue;
 
         const variants = [];
+        // Col structure: A=model, then 3 groups of 4: RAM, ROM, Launch Price, Current Price
         for (let vi = 0; vi < 3; vi++) {
-          const base = 1 + vi*4;
-          const ram = String(r[base]||'').trim();
-          const rom = String(r[base+1]||'').trim();
-          const launch  = r[base+2] ? parseFloat(r[base+2]) : null;
-          const current = r[base+3] ? parseFloat(r[base+3]) : null;
-          if (ram && rom && (launch || current)) {
+          const base = 1 + vi * 4;
+          const ram     = String(r[base]   || '').trim();
+          const rom     = String(r[base+1] || '').trim();
+          const launch  = r[base+2] && String(r[base+2]).trim() !== '' ? parseFloat(r[base+2]) : null;
+          const current = r[base+3] && String(r[base+3]).trim() !== '' ? parseFloat(r[base+3]) : null;
+          if (ram && rom && ram !== 'None' && rom !== 'None' && (launch || current)) {
             variants.push({ ram, rom, launch_price: launch, current_price: current });
           }
         }
