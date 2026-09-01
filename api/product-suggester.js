@@ -61,11 +61,42 @@ module.exports = async (req, res) => {
       .select('model_id, model, brand, launch_price_inr, current_price_inr, price_segment, variant_prices, base_variant');
 
     // filter: model's base price OR any variant price falls in band
+    const today = new Date();
     const competitors = (allModels || []).filter(m => {
-      if (m.launch_price_inr >= priceLow && m.launch_price_inr <= priceHigh) return true;
-      const variants = m.variant_prices ? Object.values(m.variant_prices) : [];
-      return variants.some(v => v.launch >= priceLow && v.launch <= priceHigh);
-    }).sort((a, b) => a.launch_price_inr - b.launch_price_inr);
+      // Check if ANY variant's current price falls in band
+      if (m.variant_prices && Object.keys(m.variant_prices).length > 0) {
+        return Object.values(m.variant_prices).some(v => {
+          const vp = v.current || v.launch;
+          return vp && vp >= priceLow && vp <= priceHigh;
+        });
+      }
+      // No variants — use current_price_inr or launch_price_inr
+      const price = m.current_price_inr || m.launch_price_inr;
+      return price && price >= priceLow && price <= priceHigh;
+    }).map(m => {
+      // Determine which variants fall in band — attach to model
+      let matchingVariants = {};
+      if (m.variant_prices && Object.keys(m.variant_prices).length > 0) {
+        Object.entries(m.variant_prices).forEach(([label, v]) => {
+          const vp = v.current || v.launch;
+          if (vp && vp >= priceLow && vp <= priceHigh) {
+            matchingVariants[label] = { ...v, effective_price: vp };
+          }
+        });
+      }
+      const effectivePrice = Object.values(matchingVariants)[0]?.effective_price
+        || m.current_price_inr || m.launch_price_inr;
+      // recency scoring — months since launch
+      const launchDate = m.launch_date ? new Date(m.launch_date) : null;
+      const monthsOld = launchDate ? (today - launchDate) / (1000 * 60 * 60 * 24 * 30) : 99;
+      const recencyScore = monthsOld <= 3 ? 1.0 : monthsOld <= 6 ? 0.7 : monthsOld <= 9 ? 0.4 : monthsOld <= 12 ? 0.2 : 0.1;
+      const recencyLabel = monthsOld <= 3 ? 'PRIMARY' : monthsOld <= 6 ? 'RECENT' : monthsOld <= 12 ? 'ACTIVE' : 'LEGACY';
+      return { ...m, monthsOld: Math.round(monthsOld), recencyScore, recencyLabel };
+    }).sort((a, b) => {
+      // Sort by recency first, then price
+      if (b.recencyScore !== a.recencyScore) return b.recencyScore - a.recencyScore;
+      return a.launch_price_inr - b.launch_price_inr;
+    });
 
     if (!competitors?.length) {
       return res.status(200).json({
@@ -191,7 +222,11 @@ module.exports = async (req, res) => {
     const topBuzz = buzz.slice(0, 5);
     const competitorSummary = competitors.map(c => {
       const sp = specsMap[c.model_id] || {};
-      return `${c.model} (₹${c.launch_price_inr?.toLocaleString('en-IN')}): ${sp.battery_mah ? sp.battery_mah + 'mAh' : ''} ${sp.processor || ''} ${sp.rear_camera || ''} ${sp.display || ''}`;
+      const variantStr = Object.entries(c.matchingVariants || {}).map(([label, v]) =>
+        `${label} @ ₹${v.effective_price?.toLocaleString('en-IN')}`
+      ).join(' | ');
+      const priceStr = variantStr || `₹${c.effectivePrice?.toLocaleString('en-IN')}`;
+      return `[${c.recencyLabel}] ${c.model} (${priceStr}, ${c.monthsOld}mo ago): ${sp.battery_mah ? sp.battery_mah + 'mAh' : ''} ${sp.processor || ''} ${sp.rear_camera || ''} ${sp.display || ''}`;
     }).join('\n');
 
     const proposedSummary = proposed_specs
@@ -211,6 +246,14 @@ ${topBuzz.map(b => `- ${b.label}: ${b.mentions} mentions, ${b.positivity ?? '?'}
 
 PROPOSED PRODUCT SPECS:
 ${proposedSummary}
+
+RECENCY CONTEXT:
+- [PRIMARY] = launched <3 months ago — these are the REAL immediate competitors
+- [RECENT] = launched 3-6 months ago — strong reference
+- [ACTIVE] = launched 6-12 months ago — market context only
+- [LEGACY] = launched 12+ months ago — ignore unless uniquely relevant
+
+Weight your analysis heavily toward PRIMARY and RECENT competitors. A consumer comparing phones RIGHT NOW will compare against these models first.
 
 Give a crisp strategic recommendation with these exact sections:
 
@@ -251,6 +294,7 @@ Respond strictly in English only — this is a professional product strategy too
       price_band: { low: Math.round(priceLow), high: Math.round(priceHigh) },
       competitors: competitors.map(c => ({
         ...c,
+        effective_price: c.current_price_inr || (c.base_variant && c.variant_prices?.[c.base_variant]?.current) || c.launch_price_inr,
         specs: specsMap[c.model_id] || null,
         buzz: modelBuzz[c.model_id] || {},
       })),
@@ -332,7 +376,7 @@ async function handlePositioning(req, res) {
     const specsText = specs ? Object.entries(specs).map(([k,v]) => `${k}: ${v}`).join(', ') : 'Not specified';
     const gapSummary = gaps.filter(g => g.is_gap).map(g => `${g.label}: ${g.mentions} mentions, ${g.positivity}% positive`).join('\n');
     const messagingSummary = competitorMessaging.filter(c => c.official_video_title || c.campaigns.length)
-      .map(c => `${c.model} (₹${c.price?.toLocaleString('en-IN')}): ${c.official_video_title || ''} ${c.campaigns.join(', ')}`).join('\n');
+      .map(c => `[${c.recencyLabel||''}] ${c.model} (₹${c.price?.toLocaleString('en-IN')}, ${c.monthsOld||'?'}mo ago): ${c.official_video_title || ''} ${c.campaigns.join(', ')}`).join('\n');
 
     const prompt = `You are a brand strategy consultant for LAVA Mobiles, an Indian smartphone brand.
 
