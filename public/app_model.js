@@ -113,6 +113,17 @@ function renderModelDeepDiveBody() {
     </div>` : ''}
 
     <div class="panel">
+      ${(phone.kv_usp || phone.kv_positioning) ? `
+      <div class="panel" style="margin-bottom:16px; border-color:rgba(212,168,71,0.3);">
+        <div class="panel-title" style="margin-bottom:10px; color:var(--gold);">🎯 Brand Positioning (from KV Analysis)</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px;">
+          ${phone.kv_usp ? `<div><div style="font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">USP</div><div style="font-size:12px; font-weight:600;">${escapeHtml(phone.kv_usp)}</div></div>` : ''}
+          ${phone.kv_positioning ? `<div><div style="font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Positioning</div><div style="font-size:12px; font-weight:600; color:var(--gold);">${escapeHtml(phone.kv_positioning)}</div></div>` : ''}
+          ${phone.kv_hero_message ? `<div><div style="font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Hero Message</div><div style="font-size:12px; font-style:italic;">"${escapeHtml(phone.kv_hero_message)}"</div></div>` : ''}
+          ${phone.kv_target_audience ? `<div><div style="font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Target Audience</div><div style="font-size:12px;">${escapeHtml(phone.kv_target_audience)}</div></div>` : ''}
+        </div>
+        ${phone.kv_analyzed_at ? `<div style="font-size:10px; color:var(--text-faint); margin-top:8px;">Analysed from KV · ${phone.kv_analyzed_at}</div>` : ''}
+      </div>` : ''}
       <div class="panel-title">Marketing Assets</div>
       <div id="marketingAssetsBox"></div>
     </div>
@@ -127,17 +138,20 @@ function renderModelDeepDiveBody() {
           </thead>
           <tbody>
             ${Object.entries(phone.variant_prices).sort((a,b) => (a[1].launch||0)-(b[1].launch||0)).map(([label, prices]) => {
-              const diff = prices.launch && prices.current ? prices.current - prices.launch : null;
+              const isBase = label === phone.base_variant;
+              // Variant price takes priority — it's more granular and recent
+              // Fall back to current_price_inr only if variant has no current price
+              const currentPrice = prices.current || (isBase ? phone.current_price_inr : null);
+              const diff = prices.launch && currentPrice ? currentPrice - prices.launch : null;
               const diffColor = diff === null ? 'var(--text-faint)' : diff > 0 ? 'var(--neg)' : diff < 0 ? 'var(--pos)' : 'var(--text-faint)';
               const diffText = diff === null ? '–' : (diff > 0 ? '+' : '') + diff.toLocaleString('en-IN');
               const vsDiff = prices.launch && phone.launch_price_inr ? prices.launch - phone.launch_price_inr : null;
               const vsColor = vsDiff === null || vsDiff === 0 ? 'var(--text-faint)' : vsDiff > 0 ? 'var(--neu)' : 'var(--pos)';
               const vsText = vsDiff === null || vsDiff === 0 ? '–' : (vsDiff > 0 ? '+' : '') + vsDiff.toLocaleString('en-IN');
-              const isBase = label === phone.base_variant;
               return `<tr style="${isBase ? 'background:rgba(34,197,94,0.05);' : ''}">
                 <td style="font-weight:600;">${escapeHtml(label)}${isBase ? ' <span style="font-size:9px;color:var(--pos);font-weight:700;">BASE</span>' : ''}</td>
                 <td class="num">${prices.launch ? '₹'+prices.launch.toLocaleString('en-IN') : '–'}</td>
-                <td class="num" style="color:var(--text);">${prices.current ? '₹'+prices.current.toLocaleString('en-IN') : '–'}</td>
+                <td class="num" style="color:var(--text);">${currentPrice ? '₹'+currentPrice.toLocaleString('en-IN') : '–'}</td>
                 <td class="num" style="color:${diffColor}; font-weight:600;">${diffText}</td>
                 <td class="num" style="color:${vsColor};">${vsText}</td>
               </tr>`;
