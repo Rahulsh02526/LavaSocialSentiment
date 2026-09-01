@@ -236,7 +236,8 @@ function renderProductLabResults(data) {
           <thead>
             <tr>
               <th>Model</th>
-              <th class="num">Price</th>
+              <th class="num">Current ₹</th>
+              <th class="num">Launch ₹</th>
               <th>Processor</th>
               <th>Battery</th>
               <th>Display</th>
@@ -260,9 +261,21 @@ function renderProductLabResults(data) {
               return `<tr>
                 <td style="font-weight:500;">
                   <a href="#" onclick="event.preventDefault(); goToModel(${c.model_id});" style="color:var(--text);">${escapeHtml(c.model)}</a>
-                  <div style="font-size:10px; color:var(--text-faint);">${c.brand}</div>
+                  <div style="font-size:10px; color:var(--text-faint);">${c.brand} · ${c.monthsOld||'?'}mo ago
+                    ${c.recencyLabel === 'PRIMARY' ? '<span style="color:var(--pos); font-weight:700;"> ●</span>' :
+                      c.recencyLabel === 'RECENT'  ? '<span style="color:var(--neu); font-weight:700;"> ●</span>' :
+                      c.recencyLabel === 'ACTIVE'  ? '<span style="color:var(--dim);"> ●</span>' : ''}
+                  </div>
                 </td>
-                <td class="num">₹${(c.launch_price_inr||0).toLocaleString('en-IN')}</td>
+                <td class="num" style="font-weight:600;">
+                  ${Object.entries(c.matchingVariants||{}).length > 0
+                    ? Object.entries(c.matchingVariants).map(([label, v]) =>
+                        `<div style="white-space:nowrap;"><span style="font-size:10px;color:var(--text-faint);">${escapeHtml(label)}</span> ₹${v.effective_price?.toLocaleString('en-IN')}</div>`
+                      ).join('')
+                    : '₹' + ((c.effectivePrice||c.current_price_inr||c.launch_price_inr)||0).toLocaleString('en-IN')
+                  }
+                </td>
+                <td class="num" style="font-size:10px; color:var(--text-faint);">₹${(c.launch_price_inr||0).toLocaleString('en-IN')}</td>
                 <td style="font-size:11px;">${escapeHtml(sp.processor||'–')}</td>
                 <td class="num">${sp.battery_mah ? sp.battery_mah+'mAh' : '–'}</td>
                 <td style="font-size:11px;">${escapeHtml(sp.display||'–')}</td>
