@@ -200,6 +200,35 @@ module.exports = async (req, res) => {
         }
 
         results.push({ model: modelName, assets_added: toInsert.length });
+
+        // Auto-analyze first KV image with Claude vision to capture USP + positioning
+        const kvAsset = toInsert.find(a => a.type === 'kv' && a.url?.match(/\.(jpg|jpeg|png|webp)/i));
+        if (kvAsset) {
+          try {
+            const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY || '', 'anthropic-version': '2023-06-01' },
+              body: JSON.stringify({
+                model: 'claude-sonnet-4-6', max_tokens: 400,
+                messages: [{ role: 'user', content: [
+                  { type: 'image', source: { type: 'url', url: kvAsset.url } },
+                  { type: 'text', text: 'Analyse this smartphone marketing creative. Return ONLY a JSON object with these exact keys: {"usp": "single most prominent claim or benefit shown", "positioning": "one-line positioning strategy e.g. Battery Beast, Camera Champion, Value King", "hero_message": "main tagline or headline text visible", "target_audience": "who this targets e.g. youth-gaming, budget-conscious, camera-lovers"}. No explanation, only JSON.' }
+                ]}]
+              }),
+            });
+            const aiData = await aiRes.json();
+            const text = (aiData.content || []).find(b => b.type === 'text')?.text || '';
+            const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+            // Save to models table
+            await supabase.from('models').update({
+              kv_usp: parsed.usp || null,
+              kv_positioning: parsed.positioning || null,
+              kv_hero_message: parsed.hero_message || null,
+              kv_target_audience: parsed.target_audience || null,
+              kv_analyzed_at: new Date().toISOString().slice(0, 10),
+            }).eq('model_id', model_id);
+          } catch(e) { /* silent — KV analysis is optional */ }
+        }
       }
 
       const totalAssets = results.reduce((s, r) => s + r.assets_added, 0);
