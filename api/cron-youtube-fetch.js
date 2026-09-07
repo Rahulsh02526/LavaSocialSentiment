@@ -42,9 +42,13 @@ function scoreVideo(item) {
   const channel = (item.snippet.channelTitle || '').toLowerCase();
   const combined = title + ' ' + channel;
 
-  // hard reject non-India signals
+  // hard reject Shorts — they have comments disabled or very sparse
+  // Shorts signals: #shorts in title, or very short title patterns
+  if (title.includes('#shorts') || title.includes('#short') || title.includes('#ytshorts')) return -1;
+
+  // hard reject non-India geography signals
   for (const sig of NON_INDIA_SIGNALS) {
-    if (combined.includes(sig)) return -1; // reject
+    if (combined.includes(sig)) return -1;
   }
 
   // score India signals positively
@@ -52,6 +56,13 @@ function scoreVideo(item) {
   for (const sig of INDIA_SIGNALS) {
     if (combined.includes(sig)) score += 2;
   }
+
+  // bonus for relevant content words
+  const REVIEW_SIGNALS = ['review', 'unboxing', 'first look', 'hands on', 'hands-on', 'camera test', 'gaming test', 'vs ', 'comparison'];
+  for (const sig of REVIEW_SIGNALS) {
+    if (title.includes(sig)) { score += 1; break; }
+  }
+
   return score;
 }
 
@@ -92,6 +103,17 @@ module.exports = async (req, res) => {
     const progress = {};
     (progressRows || []).forEach(p => { progress[p.model_id] = p; });
 
+    // fetch marketing assets — extract official YT URLs per model
+    const { data: assetRows } = await supabase.from('marketing_assets')
+      .select('model_id, type, platform, url')
+      .eq('platform', 'YouTube');
+    const officialYTMap = {}; // model_id → YouTube URL from marketing assets
+    (assetRows || []).forEach(a => {
+      if (a.url && a.url.includes('youtube.com') && !officialYTMap[a.model_id]) {
+        officialYTMap[a.model_id] = a.url;
+      }
+    });
+
     // ensure all models have a progress row
     const missing = models.filter(m => !progress[m.model_id]);
     if (missing.length) {
@@ -103,8 +125,21 @@ module.exports = async (req, res) => {
 
     const log = [];
 
+    // Sort: pending search FIRST, then oldest fetch — new models get priority over refresh
+    const sortedModels = [...models].sort((a, b) => {
+      const pa = progress[a.model_id] || {};
+      const pb = progress[b.model_id] || {};
+      const aNeedsSearch = !pa.official_search_done || !pa.reviewer_search_done;
+      const bNeedsSearch = !pb.official_search_done || !pb.reviewer_search_done;
+      if (aNeedsSearch && !bNeedsSearch) return -1;
+      if (!aNeedsSearch && bNeedsSearch) return 1;
+      const aLast = pa.comments_fetched_at ? new Date(pa.comments_fetched_at).getTime() : 0;
+      const bLast = pb.comments_fetched_at ? new Date(pb.comments_fetched_at).getTime() : 0;
+      return aLast - bLast;
+    });
+
     // find first model that needs any work and do ALL its pending operations
-    for (const model of models) {
+    for (const model of sortedModels) {
       const p = progress[model.model_id] || {};
       const needsSearch = !p.official_search_done || !p.reviewer_search_done;
       const lastFetch = p.comments_fetched_at ? new Date(p.comments_fetched_at) : null;
@@ -120,47 +155,78 @@ module.exports = async (req, res) => {
 
       // ---- OFFICIAL VIDEO SEARCH ----
       if (!p.official_search_done && searchCallsToday < 90) {
-        const query = encodeURIComponent(`"${model.model}" official launch`);
-        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=10&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&videoDuration=medium&publishedAfter=${publishedAfter}&key=${ytKey}`;
-        const r = await fetch(url);
-        const data = await r.json();
-        searchCallsToday++; unitsToday += 100;
-        await supabase.from('quota_log').insert({ log_date: today, units_used: 100, call_type: 'search.list', model_id: model.model_id });
 
-        if (!data.error && data.items?.length) {
-          const filtered = filterAndRankVideos(data.items);
-          if (filtered.length) {
-            const brand = (model.brand || '').toLowerCase();
-            // prefer channel containing brand name for official
-            const sorted = filtered.sort((a, b) => {
-              const aOff = a.snippet.channelTitle.toLowerCase().includes(brand) ? 1 : 0;
-              const bOff = b.snippet.channelTitle.toLowerCase().includes(brand) ? 1 : 0;
-              return bOff - aOff;
-            });
-            const top = sorted[0];
+        // FIRST: check if official YT URL exists in marketing assets — no quota used!
+        const assetYTUrl = officialYTMap[model.model_id];
+        if (assetYTUrl) {
+          const videoIdMatch = assetYTUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+          const videoId = videoIdMatch?.[1];
+          if (videoId) {
+            // fetch video details (title, channel) — costs 1 unit only
+            const vr = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${ytKey}`);
+            const vd = await vr.json();
+            unitsToday += 1;
+            await supabase.from('quota_log').insert({ log_date: today, units_used: 1, call_type: 'videos.list', model_id: model.model_id });
+            const vItem = vd.items?.[0];
             await supabase.from('model_videos').upsert({
-              model_id: model.model_id, video_id: top.id.videoId, video_type: 'official',
-              title: top.snippet.title, channel: top.snippet.channelTitle,
-              channel_id: top.snippet.channelId, published_at: top.snippet.publishedAt,
+              model_id: model.model_id, video_id: videoId, video_type: 'official',
+              title: vItem?.snippet?.title || assetYTUrl,
+              channel: vItem?.snippet?.channelTitle || null,
+              channel_id: vItem?.snippet?.channelId || null,
+              published_at: vItem?.snippet?.publishedAt || null,
               mapped_at: new Date().toISOString(),
             }, { onConflict: 'model_id,video_id' });
-            log.push(`Official: "${model.model}" → "${top.snippet.title}" (${top.snippet.channelTitle})`);
-          } else {
-            log.push(`Official: "${model.model}" — all results filtered as non-India`);
+            log.push(`Official: "${model.model}" → from marketing assets (no quota used) → "${vItem?.snippet?.title || videoId}"`);
+            await supabase.from('fetch_progress').upsert({
+              model_id: model.model_id, official_search_done: true, updated_at: new Date().toISOString()
+            }, { onConflict: 'model_id' });
+            p.official_search_done = true;
           }
-        } else {
-          log.push(`Official: "${model.model}" — no results`);
         }
-        await supabase.from('fetch_progress').upsert({
-          model_id: model.model_id, official_search_done: true, updated_at: new Date().toISOString()
-        }, { onConflict: 'model_id' });
-        p.official_search_done = true;
+
+        // FALLBACK: search YouTube if no marketing asset URL found
+        if (!p.official_search_done) {
+          const query = encodeURIComponent(`"${model.model}" official launch`);
+          const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=10&regionCode=${REGION}&relevanceLanguage=en&order=relevance&publishedAfter=${publishedAfter}&key=${ytKey}`;
+          const r = await fetch(url);
+          const data = await r.json();
+          searchCallsToday++; unitsToday += 100;
+          await supabase.from('quota_log').insert({ log_date: today, units_used: 100, call_type: 'search.list', model_id: model.model_id });
+
+          if (!data.error && data.items?.length) {
+            const filtered = filterAndRankVideos(data.items);
+            if (filtered.length) {
+              const brand = (model.brand || '').toLowerCase();
+              const sorted = filtered.sort((a, b) => {
+                const aOff = a.snippet.channelTitle.toLowerCase().includes(brand) ? 1 : 0;
+                const bOff = b.snippet.channelTitle.toLowerCase().includes(brand) ? 1 : 0;
+                return bOff - aOff;
+              });
+              const top = sorted[0];
+              await supabase.from('model_videos').upsert({
+                model_id: model.model_id, video_id: top.id.videoId, video_type: 'official',
+                title: top.snippet.title, channel: top.snippet.channelTitle,
+                channel_id: top.snippet.channelId, published_at: top.snippet.publishedAt,
+                mapped_at: new Date().toISOString(),
+              }, { onConflict: 'model_id,video_id' });
+              log.push(`Official: "${model.model}" → YT search → "${top.snippet.title}" (${top.snippet.channelTitle})`);
+            } else {
+              log.push(`Official: "${model.model}" — all results filtered as non-India`);
+            }
+          } else {
+            log.push(`Official: "${model.model}" — no results`);
+          }
+          await supabase.from('fetch_progress').upsert({
+            model_id: model.model_id, official_search_done: true, updated_at: new Date().toISOString()
+          }, { onConflict: 'model_id' });
+          p.official_search_done = true;
+        }
       }
 
       // ---- REVIEWER VIDEOS SEARCH ----
       if (!p.reviewer_search_done && searchCallsToday < 90) {
         const query = encodeURIComponent(`"${model.model}" review`);
-        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=20&regionCode=${REGION}&relevanceLanguage=en&order=viewCount&videoDuration=medium&publishedAfter=${publishedAfter}&key=${ytKey}`;
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=20&regionCode=${REGION}&relevanceLanguage=en&order=relevance&publishedAfter=${publishedAfter}&key=${ytKey}`;
         const r = await fetch(url);
         const data = await r.json();
         searchCallsToday++; unitsToday += 100;
