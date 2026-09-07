@@ -60,6 +60,13 @@ function renderYoutubeView() {
       <button class="primary" onclick="triggerManualFetch()" id="ytManualBtn" ${ytManualTriggerBusy?'disabled':''}>
         ${ytManualTriggerBusy ? '<span class="spinner"></span> Running...' : (isAdminLoggedIn() ? 'Run Fetch Batch Now' : 'Admin Login Required')}
       </button>
+      ${isAdminLoggedIn() ? `
+      <button class="primary" onclick="startAutoFetch()" style="margin-left:8px; background:var(--pos);">
+        ▶▶ Run All Pending
+      </button>
+      <button class="ghost" id="ytStopBtn" onclick="stopAutoFetch()" style="display:none; margin-left:8px;">
+        ⏹ Stop
+      </button>` : ''}
       <div id="ytManualResultBox" style="margin-top:14px;"></div>
     </div>
 
@@ -71,17 +78,23 @@ function renderYoutubeView() {
   renderYtMappedList();
 }
 
-async function triggerManualFetch() {
+let ytAutoRunning = false;
+let ytAutoRunCount = 0;
+const YT_AUTO_MAX = 20; // safety cap — max 20 auto-runs per session
+
+async function triggerManualFetch(autoRun = false) {
   if (!isAdminLoggedIn()) { promptAdminLoginRedirect(); return; }
+  if (ytManualTriggerBusy) return;
 
   ytManualTriggerBusy = true;
   const btn = document.getElementById('ytManualBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Running...';
-  const resultBox = document.getElementById('ytManualResultBox');
-  resultBox.innerHTML = '';
+  const stopBtn = document.getElementById('ytStopBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Running...'; }
+  if (stopBtn) stopBtn.style.display = 'inline-block';
 
-  // 65 second timeout — slightly more than Vercel's 60s function limit
+  const resultBox = document.getElementById('ytManualResultBox');
+  if (!autoRun) { resultBox.innerHTML = ''; ytAutoRunCount = 0; }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 65000);
 
@@ -92,29 +105,77 @@ async function triggerManualFetch() {
     });
     clearTimeout(timeoutId);
     const data = await resp.json();
+    ytAutoRunCount++;
 
-    resultBox.innerHTML = `
-      <div class="notice">${escapeHtml(data.message || 'Done.')}</div>
-      ${data.log && data.log.length ? `<div style="font-size:12px; color:var(--text-dim); font-family:var(--mono); max-height:220px; overflow-y:auto; background:var(--panel-2); padding:10px; border-radius:6px;">${data.log.map(l => escapeHtml(l)).join('<br>')}</div>` : ''}
+    // append log (don't replace)
+    const entry = document.createElement('div');
+    entry.style.cssText = 'margin-bottom:6px;';
+    entry.innerHTML = `
+      <div class="notice" style="margin-bottom:4px;">${escapeHtml(data.message || 'Done.')}</div>
+      ${data.log?.length ? `<div style="font-size:11px; color:var(--text-dim); font-family:var(--mono); background:var(--panel-2); padding:8px 10px; border-radius:6px;">${data.log.map(l => escapeHtml(l)).join('<br>')}</div>` : ''}
     `;
+    resultBox.prepend(entry);
 
-    // refresh data so the UI reflects what just happened
+    // refresh status
     STATE.fetchStatus = await apiGet('/api/data?mode=status');
     const fresh = await apiGet('/api/data');
     STATE.phones = fresh.phones; STATE.comments = fresh.comments; STATE.videoMap = fresh.videoMap;
     renderTopbar();
-    renderYoutubeView();
+
+    // check if there are still pending models — auto-continue if yes
+    const status = STATE.fetchStatus;
+    const stillPending = status && (status.pending_search > 0);
+    const hasWork = stillPending;
+
+    if (hasWork && ytAutoRunning && ytAutoRunCount < YT_AUTO_MAX) {
+      // update button to show progress
+      if (btn) btn.innerHTML = `<span class="spinner"></span> Running... (${ytAutoRunCount} done, ${status.pending_search || 0} pending)`;
+      ytManualTriggerBusy = false;
+      setTimeout(() => triggerManualFetch(true), 1500); // 1.5s pause between runs
+      return;
+    } else {
+      // all done or stopped
+      ytAutoRunning = false;
+      renderYoutubeView();
+      if (ytAutoRunCount > 1) {
+        const summary = document.createElement('div');
+        summary.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos); margin-bottom:8px;">✓ Completed ${ytAutoRunCount} runs — ${status?.fully_covered || '?'} models fully covered</div>`;
+        resultBox.prepend(summary);
+      }
+    }
   } catch (e) {
     clearTimeout(timeoutId);
+    ytAutoRunning = false;
     if (e.name === 'AbortError') {
-      resultBox.innerHTML = `<div class="notice warn">Request timed out after 65 seconds — the server may still be processing. Refresh the page to see updated status.</div>`;
+      const entry = document.createElement('div');
+      entry.innerHTML = `<div class="notice warn">Timed out — server may still be processing.</div>`;
+      resultBox.prepend(entry);
     } else {
-      resultBox.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
+      const entry = document.createElement('div');
+      entry.innerHTML = `<div class="notice danger">Failed: ${escapeHtml(e.message)}</div>`;
+      resultBox.prepend(entry);
     }
   }
+
   ytManualTriggerBusy = false;
-  btn.disabled = false;
-  btn.innerHTML = isAdminLoggedIn() ? 'Run Fetch Batch Now' : 'Admin Login Required';
+  ytAutoRunning = false;
+  if (btn) { btn.disabled = false; btn.innerHTML = isAdminLoggedIn() ? 'Run Fetch Batch Now' : 'Admin Login Required'; }
+  if (stopBtn) stopBtn.style.display = 'none';
+}
+
+function startAutoFetch() {
+  if (ytAutoRunning) return;
+  ytAutoRunning = true;
+  ytAutoRunCount = 0;
+  triggerManualFetch(false);
+}
+
+function stopAutoFetch() {
+  ytAutoRunning = false;
+  const stopBtn = document.getElementById('ytStopBtn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  const btn = document.getElementById('ytManualBtn');
+  if (btn) btn.innerHTML = isAdminLoggedIn() ? 'Run Fetch Batch Now' : 'Admin Login Required';
 }
 
 function renderYtMappedList() {
