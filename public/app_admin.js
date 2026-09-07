@@ -191,6 +191,61 @@ function renderAdminView() {
     <!-- VARIANT PRICING -->
     <div id="variantPricingSection"></div>
 
+    <!-- ECOM COMMENTS PASTE UPLOAD -->
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-title" style="margin-bottom:4px;">💬 Bulk Upload E-com Reviews</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">
+        Go to Amazon/Flipkart product page → select all reviews → copy → paste below. Platform auto-parses reviewer, rating, date and review text.
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:12px;">
+        <div class="field">
+          <label>Model *</label>
+          <select id="ecom_model">
+            <option value="">Select model...</option>
+            ${(STATE.phones || []).sort((a,b) => a.model.localeCompare(b.model)).map(p =>
+              `<option value="${p.model_id}|${escapeHtml(p.model)}">${p.model}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Source *</label>
+          <select id="ecom_source">
+            <option value="Amazon">Amazon</option>
+            <option value="Flipkart">Flipkart</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field" style="margin-bottom:12px;">
+        <label>Paste Reviews Here (copy from product page)</label>
+        <textarea id="ecom_paste_area" rows="10"
+          style="width:100%; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:10px; color:var(--text); font-size:12px; font-family:var(--mono); resize:vertical;"
+          placeholder="Paste copied reviews from Amazon or Flipkart here..."></textarea>
+      </div>
+
+      <div style="display:flex; gap:10px; margin-bottom:12px;">
+        <button class="primary" onclick="parseAndPreviewEcomReviews()">Parse & Preview</button>
+        <button class="ghost" onclick="document.getElementById('ecom_paste_area').value=''; document.getElementById('ecomPasteStatus').innerHTML=''; document.getElementById('ecomPastePreview').innerHTML='';">Clear</button>
+      </div>
+
+      <div id="ecomPasteStatus"></div>
+      <div id="ecomPastePreview"></div>
+    </div>
+
+    <!-- ECOM COMMENTS BULK UPLOAD -->
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-title" style="margin-bottom:4px;">💬 Bulk Upload E-com Comments via Excel</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">Upload Amazon/Flipkart reviews for any model. Duplicates are auto-skipped. Comments will need tagging via Tagging Engine after upload.</div>
+      <div id="ecomCommentsStatus"></div>
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <input type="file" id="ecomCommentsXlsx" accept=".xlsx,.xls" style="font-size:12px; color:var(--text-dim);">
+        <button class="small primary" onclick="parseEcomCommentsXlsx()">Preview</button>
+      </div>
+      <div style="font-size:11px; color:var(--text-faint);">Columns: Model Name · Source (Amazon/Flipkart) · Review Text · Date · Rating</div>
+      <div id="ecomCommentsPreview" style="margin-top:12px;"></div>
+    </div>
+
     <!-- MARKETING ASSETS BULK UPLOAD -->
     <div class="panel" style="margin-bottom:20px;">
       <div class="panel-title" style="margin-bottom:4px;">🎨 Bulk Upload Marketing Assets via Excel</div>
@@ -891,5 +946,264 @@ async function submitPricingUpload(rows) {
     renderTopbar();
   } catch(e) {
     status.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── E-com Comments Upload ──
+async function parseEcomCommentsXlsx() {
+  const file = document.getElementById('ecomCommentsXlsx').files[0];
+  if (!file) { alert('Please select an Excel file first.'); return; }
+  const status  = document.getElementById('ecomCommentsStatus');
+  const preview = document.getElementById('ecomCommentsPreview');
+  status.innerHTML = `<div class="notice"><span class="spinner"></span> Parsing...</div>`;
+  preview.innerHTML = '';
+
+  const reader = new FileReader();
+  reader.onerror = () => { status.innerHTML = `<div class="notice danger">File read failed.</div>`; };
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:E100');
+      const keys = ['model', 'source', 'comment_text', 'comment_date', 'rating'];
+
+      const rows = [];
+      // Row 3 onwards (index 2) — skip instruction + header
+      for (let R = 2; R <= range.e.r; R++) {
+        const row = {};
+        for (let C = 0; C <= 4; C++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+          let val = cell ? cell.v : '';
+          if (cell?.t === 'd' || val instanceof Date) {
+            val = new Date(val).toISOString().slice(0, 10);
+          }
+          row[keys[C]] = val !== null && val !== undefined ? String(val).trim() : '';
+        }
+        if (!row.model || !row.comment_text || row.model === 'Model Name *') continue;
+        rows.push(row);
+      }
+
+      // group by model for display
+      const byModel = {};
+      rows.forEach(r => {
+        if (!byModel[r.model]) byModel[r.model] = { amazon: 0, flipkart: 0 };
+        if (r.source === 'Amazon') byModel[r.model].amazon++;
+        else if (r.source === 'Flipkart') byModel[r.model].flipkart++;
+      });
+
+      if (!rows.length) { status.innerHTML = `<div class="notice danger">No data found.</div>`; return; }
+
+      window._pendingEcomComments = rows;
+      status.innerHTML = `<div class="notice">${rows.length} comment(s) across ${Object.keys(byModel).length} model(s) ready.</div>`;
+      preview.innerHTML = `
+        <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-bottom:12px;">
+          <table>
+            <thead><tr><th>Model</th><th class="num">Amazon</th><th class="num">Flipkart</th><th class="num">Total</th></tr></thead>
+            <tbody>
+              ${Object.entries(byModel).map(([model, counts]) => `
+                <tr>
+                  <td style="font-weight:500;">${escapeHtml(model)}</td>
+                  <td class="num">${counts.amazon || '–'}</td>
+                  <td class="num">${counts.flipkart || '–'}</td>
+                  <td class="num" style="font-weight:600;">${counts.amazon + counts.flipkart}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button class="primary" onclick="submitEcomComments()">✓ Upload ${rows.length} Comment(s)</button>
+          <button class="ghost" onclick="document.getElementById('ecomCommentsPreview').innerHTML=''; document.getElementById('ecomCommentsStatus').innerHTML=''; window._pendingEcomComments=null;">Cancel</button>
+        </div>
+      `;
+    } catch(err) {
+      status.innerHTML = `<div class="notice danger">Parse error: ${escapeHtml(err.message)}</div>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function submitEcomComments() {
+  const rows = window._pendingEcomComments;
+  if (!rows?.length) { alert('No data to upload.'); return; }
+  const status = document.getElementById('ecomCommentsStatus');
+  status.innerHTML = `<div class="notice"><span class="spinner"></span> Uploading ${rows.length} comments...</div>`;
+  try {
+    const result = await apiPost('/api/prices?action=ecom-comments', { rows });
+    status.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
+    if (result.errors?.length) {
+      status.innerHTML += `<div class="notice danger" style="margin-top:6px;">${result.errors.map(e => escapeHtml(e)).join('<br>')}</div>`;
+    }
+    document.getElementById('ecomCommentsPreview').innerHTML = '';
+    window._pendingEcomComments = null;
+    // refresh
+    const fresh = await apiGet('/api/data');
+    STATE.phones = fresh.phones; STATE.comments = fresh.comments;
+    renderTopbar();
+  } catch(e) {
+    status.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── E-com Reviews Paste Parser ──
+function parseAmazonFlipkartText(rawText) {
+  const lines = rawText.split('\n').map(l => l.trim());
+  const reviews = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Amazon pattern: rating line = "X.X out of 5 stars <title>"
+    const ratingMatch = line.match(/^(\d+\.?\d*)\s*out of\s*5\s*stars\s*(.*)/i);
+    if (ratingMatch) {
+      const rating = parseFloat(ratingMatch[1]);
+      const title  = ratingMatch[2].trim().replace(/\u00a0/g, '').trim();
+
+      // reviewer is line before rating (if not blank/date/meta)
+      const reviewer = i > 0 && lines[i-1] && !lines[i-1].match(/Reviewed in|Colour:|Helpful|Report/) ? lines[i-1] : '';
+
+      // date on next line
+      let date = null;
+      let j = i + 1;
+      const dateLine = lines[j] || '';
+      const dateMatch = dateLine.match(/on (\d{1,2} \w+ \d{4})/);
+      if (dateMatch) {
+        const months = { January:'01',February:'02',March:'03',April:'04',May:'05',June:'06',
+                         July:'07',August:'08',September:'09',October:'10',November:'11',December:'12' };
+        const parts = dateMatch[1].split(' ');
+        const m = months[parts[1]];
+        if (m) date = `${parts[2]}-${m}-${parts[0].padStart(2,'0')}`;
+        j++;
+      }
+
+      // skip metadata (Colour/Size/Verified)
+      if (lines[j] && /Colour:|Size:|Verified Purchase|colour:|size:/i.test(lines[j])) j++;
+
+      // collect text until blank/emoji/noise
+      const textLines = [];
+      while (j < lines.length) {
+        const l = lines[j];
+        if (!l) break;
+        if (/^\d+ people found/i.test(l)) break;
+        if (/^(Helpful|Report|Translate review)/i.test(l)) break;
+        if (/^[⭐🤩👍💯🔥✅❌★☆]+$/.test(l)) break;
+        if (/out of 5 stars/.test(l)) break;  // next review starting
+        textLines.push(l);
+        j++;
+      }
+
+      const fullText = [title, ...textLines].filter(Boolean).join(' ').trim();
+      if (fullText.length > 10) {
+        reviews.push({ reviewer, rating, date, text: fullText });
+      }
+      i = j;
+      continue;
+    }
+
+    // Flipkart pattern: "X/5" or "★★★★★" rating
+    const fkRating = line.match(/^(\d)\/5$/) || line.match(/^(★+)/);
+    if (fkRating) {
+      const rating = fkRating[1] ? (fkRating[1].length || parseInt(fkRating[1])) : null;
+      let j = i + 1;
+      // next non-empty lines = title + text until blank
+      const textLines = [];
+      while (j < lines.length && lines[j]) {
+        const l = lines[j];
+        if (/^\d+ months? ago|^\d+ days? ago|\d{1,2} \w+ \d{4}/.test(l)) { j++; continue; }
+        if (/^(Helpful|Report|READ MORE)/i.test(l)) break;
+        textLines.push(l);
+        j++;
+      }
+      const fullText = textLines.join(' ').trim();
+      if (fullText.length > 10) {
+        reviews.push({ reviewer: '', rating, date: null, text: fullText });
+      }
+      i = j;
+      continue;
+    }
+
+    i++;
+  }
+  return reviews;
+}
+
+async function parseAndPreviewEcomReviews() {
+  const modelVal  = document.getElementById('ecom_model')?.value;
+  const source    = document.getElementById('ecom_source')?.value;
+  const rawText   = document.getElementById('ecom_paste_area')?.value?.trim();
+  const statusEl  = document.getElementById('ecomPasteStatus');
+  const previewEl = document.getElementById('ecomPastePreview');
+
+  if (!modelVal) { statusEl.innerHTML = `<div class="notice danger">Please select a model first.</div>`; return; }
+  if (!rawText)  { statusEl.innerHTML = `<div class="notice danger">Please paste some review text first.</div>`; return; }
+
+  const [model_id, model_name] = modelVal.split('|');
+
+  // Show what's already captured for this model+source
+  const existingComments = (STATE.comments || []).filter(c =>
+    String(c.model_id) === String(model_id) && c.source === source
+  );
+  if (existingComments.length) {
+    const dates = existingComments.map(c => c.comment_date).filter(Boolean).sort();
+    const oldest = dates[0], newest = dates[dates.length-1];
+    statusEl.innerHTML = `<div class="notice" style="margin-bottom:8px;">
+      ℹ️ Already captured: <b>${existingComments.length}</b> ${source} reviews for ${escapeHtml(model_name)}
+      ${dates.length ? `· Dates: <b>${oldest}</b> to <b>${newest}</b>` : ''}
+      <br><span style="font-size:11px; color:var(--text-faint);">Duplicates will be auto-skipped</span>
+    </div>`;
+  }
+
+  const reviews = parseAmazonFlipkartText(rawText);
+
+  if (!reviews.length) {
+    statusEl.innerHTML = `<div class="notice danger">No reviews detected. Make sure you copied from Amazon/Flipkart product page.</div>`;
+    return;
+  }
+
+  // store globally
+  window._pendingEcomPaste = reviews.map(r => ({
+    model: model_name, source, comment_text: r.text,
+    comment_date: r.date, rating: r.rating,
+  }));
+
+  statusEl.innerHTML = `<div class="notice">${reviews.length} review(s) parsed from ${source}. Review below then upload.</div>`;
+
+  previewEl.innerHTML = `
+    <div class="table-wrap" style="max-height:360px; overflow-y:auto; margin-bottom:12px;">
+      <table>
+        <thead><tr><th>Reviewer</th><th>Rating</th><th>Date</th><th>Review (preview)</th></tr></thead>
+        <tbody>
+          ${reviews.map(r => `<tr>
+            <td style="font-size:11px; white-space:nowrap;">${escapeHtml(r.reviewer||'–')}</td>
+            <td style="text-align:center;">${r.rating ? '★'.repeat(Math.round(r.rating)) : '–'}</td>
+            <td style="font-size:11px; white-space:nowrap;">${r.date||'–'}</td>
+            <td style="font-size:11px; color:var(--text-dim);">${escapeHtml((r.text||'').slice(0,100))}${(r.text||'').length>100?'…':''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <button class="primary" onclick="submitEcomPaste()">✓ Upload ${reviews.length} Review(s) for ${escapeHtml(model_name)}</button>
+      <button class="ghost" onclick="document.getElementById('ecomPastePreview').innerHTML=''; document.getElementById('ecomPasteStatus').innerHTML=''; window._pendingEcomPaste=null;">Cancel</button>
+    </div>
+  `;
+}
+
+async function submitEcomPaste() {
+  const rows = window._pendingEcomPaste;
+  if (!rows?.length) { alert('No data.'); return; }
+  const statusEl = document.getElementById('ecomPasteStatus');
+  statusEl.innerHTML = `<div class="notice"><span class="spinner"></span> Uploading ${rows.length} reviews...</div>`;
+  try {
+    const result = await apiPost('/api/prices?action=ecom-comments', { rows });
+    statusEl.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
+    document.getElementById('ecomPastePreview').innerHTML = '';
+    document.getElementById('ecom_paste_area').value = '';
+    window._pendingEcomPaste = null;
+    const fresh = await apiGet('/api/data');
+    STATE.phones = fresh.phones; STATE.comments = fresh.comments;
+    renderTopbar();
+  } catch(e) {
+    statusEl.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
   }
 }
