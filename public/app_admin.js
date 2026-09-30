@@ -752,22 +752,64 @@ async function parseAssetsXlsx() {
       const ws = wb.Sheets[wb.SheetNames[0]];
 
       // Get the range
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:J100');
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:K100');
       const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
-      // Fixed column order matching the template exactly:
-      // A=model, B=website, C=kv1, D=kv2, E=kv3, F=youtube, G=x_twitter, H=instagram, I=facebook, J=notes
-      const keys = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
+
+      // Auto-detect column layout by reading the header row (row index 1 = Excel row 2)
+      // Supports two formats:
+      //   Format A (old): A=Model, B=Website, C=KV1 ... (no Model ID column)
+      //   Format B (new): A=Model id, B=Model, C=Website, D=KV1 ... (with Model ID column)
+      const headerRow = {};
+      const maxCols = range.e.c + 1;
+      for (let C = 0; C < maxCols; C++) {
+        const cell = ws[XLSX.utils.encode_cell({ r: 1, c: C })]; // row index 1 = Excel row 2
+        if (cell) headerRow[C] = String(cell.v || '').toLowerCase().trim();
+      }
+
+      // Find which column index holds the model name
+      // 'model id' column is skipped; we want the 'model' column (exact match)
+      let modelCol = -1;
+      const colKeyMap = {}; // column index → field key
+      const fieldByHeader = {
+        'model': 'model', 'official website': 'official_website', 'website': 'official_website',
+        'kv 1': 'kv1', 'kv1': 'kv1',
+        'kv 2': 'kv2', 'kv2': 'kv2',
+        'kv 3': 'kv3', 'kv3': 'kv3',
+        'yt': 'youtube', 'youtube': 'youtube',
+        'x': 'x_twitter', 'twitter': 'x_twitter',
+        'instagram': 'instagram', 'ig': 'instagram',
+        'facebook': 'facebook', 'fb': 'facebook',
+        'notes': 'notes',
+      };
+      for (let C = 0; C < maxCols; C++) {
+        const h = headerRow[C];
+        if (!h || h === 'model id') continue; // skip Model ID column
+        const field = fieldByHeader[h];
+        if (field) {
+          colKeyMap[C] = field;
+          if (field === 'model') modelCol = C;
+        }
+      }
+
+      // Fallback: if header detection failed, assume old format (A=model, B=website...)
+      if (modelCol === -1) {
+        const fallbackKeys = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
+        fallbackKeys.forEach((k, i) => { colKeyMap[i] = k; });
+        modelCol = 0;
+      }
 
       const rows = [];
-      // Start from row index 2 (row 3 in Excel = first data row, skip instruction+header)
+      // Data starts at row index 2 (Excel row 3), skip header rows
       for (let R = 2; R <= range.e.r; R++) {
         const row = {};
-        for (let C = 0; C <= 9; C++) {
-          const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
+        for (const [C, field] of Object.entries(colKeyMap)) {
+          const cellAddr = XLSX.utils.encode_cell({ r: R, c: parseInt(C) });
           const cell = ws[cellAddr];
-          row[keys[C]] = cell ? String(cell.v || '').trim() : '';
+          row[field] = cell ? String(cell.v || '').trim() : '';
         }
         if (!row.model || row.model.startsWith('⬇') || row.model === 'Model Name *') continue;
+        // Skip rows where model looks like a numeric ID (means mapping failed)
+        if (/^\d+$/.test(row.model)) continue;
         rows.push(row);
       }
 
