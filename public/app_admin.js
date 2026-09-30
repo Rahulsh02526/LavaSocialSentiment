@@ -755,14 +755,14 @@ async function parseAssetsXlsx() {
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:K100');
       const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
 
-      // Auto-detect column layout by reading the header row (row index 1 = Excel row 2)
+      // Auto-detect column layout by reading the header row (row index 0 = Excel row 1)
       // Supports two formats:
       //   Format A (old): A=Model, B=Website, C=KV1 ... (no Model ID column)
       //   Format B (new): A=Model id, B=Model, C=Website, D=KV1 ... (with Model ID column)
       const headerRow = {};
       const maxCols = range.e.c + 1;
       for (let C = 0; C < maxCols; C++) {
-        const cell = ws[XLSX.utils.encode_cell({ r: 1, c: C })]; // row index 1 = Excel row 2
+        const cell = ws[XLSX.utils.encode_cell({ r: 0, c: C })]; // row index 0 = Excel row 1 (headers)
         if (cell) headerRow[C] = String(cell.v || '').toLowerCase().trim();
       }
 
@@ -799,8 +799,8 @@ async function parseAssetsXlsx() {
       }
 
       const rows = [];
-      // Data starts at row index 2 (Excel row 3), skip header rows
-      for (let R = 2; R <= range.e.r; R++) {
+      // Data starts at row index 1 (Excel row 2), after the header row
+      for (let R = 1; R <= range.e.r; R++) {
         const row = {};
         for (const [C, field] of Object.entries(colKeyMap)) {
           const cellAddr = XLSX.utils.encode_cell({ r: R, c: parseInt(C) });
