@@ -817,7 +817,24 @@ async function parseAssetsXlsx() {
       window._pendingAssets = validRows; // store globally to avoid large onclick string
 
       if (!validRows.length) {
-        status.innerHTML = `<div class="notice danger">No valid rows found. Parsed ${rows.length} rows. First row model: "${rows[0]?.model||'none'}", website: "${rows[0]?.official_website||'none'}"</div>`;
+        // Debug: dump headers and first data row for diagnosis
+        const headerDump = Object.entries(headerRow).map(([c,h]) => `col${c}="${h}"`).join(', ');
+        const colMapDump = Object.entries(colKeyMap).map(([c,f]) => `col${c}→${f}`).join(', ');
+        const firstRow = rows[0];
+        const firstRowDump = firstRow ? Object.entries(firstRow).map(([k,v]) => `${k}="${v}"`).join(', ') : 'no rows parsed';
+        // Also check raw cell values from row 1 (first data row)
+        const rawRow1 = [];
+        for (let C = 0; C <= Math.min(range.e.c, 9); C++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: 1, c: C })];
+          rawRow1.push(`[${C}]="${cell ? cell.v : 'empty'}"`);
+        }
+        status.innerHTML = `<div class="notice danger" style="font-size:11px; line-height:1.6;">
+          <b>No valid rows found.</b> Parsed ${rows.length} raw rows, ${validRows.length} valid.<br>
+          <b>Headers (row 0):</b> ${headerDump || 'NONE'}<br>
+          <b>ColMap:</b> ${colMapDump || 'NONE (fallback used)'}<br>
+          <b>Raw row 1 cells:</b> ${rawRow1.join(', ')}<br>
+          <b>First parsed row:</b> ${firstRowDump}
+        </div>`;
         return;
       }
 
