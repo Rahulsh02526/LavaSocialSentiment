@@ -1,42 +1,49 @@
 /* ============================================================
-   LAVA SIP — Light Theme Design System
-   Replaces styles.css — all class names are identical,
-   only the colour tokens and a few polish details have changed.
+   LAVA SIP — Light Theme v2 with Navy + Orange brand identity
    ============================================================ */
 
-/* ---- Design tokens ---- */
 :root {
-  /* Backgrounds */
-  --bg:        #f0f2f5;        /* page background — light cool gray */
-  --panel:     #ffffff;        /* card / sidebar / topbar surface */
-  --panel-2:   #f7f8fa;        /* inner panels, table row, input bg */
+  /* Page background */
+  --bg:        #f0f3f8;
+
+  /* Cards / content panels */
+  --panel:     #ffffff;
+  --panel-2:   #f5f7fa;
 
   /* Borders */
-  --border:    #e0e4ea;        /* default divider */
+  --border:    #dde2ec;
 
   /* Typography */
-  --text:      #1a2033;        /* primary text — near-black navy */
-  --text-dim:  #4b5775;        /* secondary text */
-  --text-faint:#8e99b0;        /* placeholder / hint text */
+  --text:      #1a2033;
+  --text-dim:  #4b5775;
+  --text-faint:#8e99b0;
 
-  /* LAVA brand accent (kept orange — consistent with logo) */
-  --accent:    #f05a1a;        /* LAVA orange */
-  --accent-dim:#fce9de;        /* accent tint for active pills, etc. */
+  /* LAVA brand */
+  --accent:    #f05a1a;        /* LAVA orange — buttons, active tab underline */
+  --accent-dim:#fce9de;
 
-  /* Sentiment colours — slightly richer for light bg */
-  --pos:       #1f9e6e;        /* positive green */
+  /* Navy — topbar background */
+  --navy:      #1b2a4a;
+  --navy-dim:  #243558;        /* hover state inside topbar */
+  --navy-text: #ffffff;        /* text on navy bg */
+  --navy-muted:#a8bcd8;        /* dim text on navy */
+
+  /* Tab bar */
+  --tabbar-bg: #eef1f8;        /* light blue-gray tab strip */
+  --tab-text:  #3a4b6b;        /* inactive tab text */
+
+  /* Sentiment */
+  --pos:       #1a9e6e;
   --pos-bg:    #e6f7f1;
-  --neg:       #d94040;        /* negative red */
+  --neg:       #d94040;
   --neg-bg:    #fdeaea;
-  --neu:       #c08a00;        /* neutral amber */
+  --neu:       #c08a00;
   --neu-bg:    #fef7e0;
 
-  /* Fonts */
   --mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
   --sans: 'IBM Plex Sans', -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
-/* ---- Reset ---- */
 * { box-sizing: border-box; }
 
 body {
@@ -50,50 +57,44 @@ body {
 
 .app { display: flex; flex-direction: column; min-height: 100vh; }
 
-/* ---- Header / Topbar ---- */
+/* ============================================================
+   TOPBAR — navy background, LAVA orange brand mark
+   ============================================================ */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
   height: 56px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  background: var(--navy);
+  border-bottom: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
 }
 
 .brand { display: flex; align-items: center; gap: 10px; }
 
-/* LAVA wordmark — orange */
 .brand-mark {
   font-family: var(--mono);
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent);        /* orange on navy — high contrast, on-brand */
   font-size: 16px;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
 }
 
 .brand-name {
   font-weight: 600;
   font-size: 15px;
-  color: var(--text);
-}
-
-/* Sub-title shown below brand on sidebar mockup, hidden in topbar */
-.brand-sub {
-  font-size: 11px;
-  color: var(--text-faint);
-  letter-spacing: 0.2px;
+  color: var(--navy-text);
 }
 
 .brand-ver {
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--text-faint);
-  border: 1px solid var(--border);
+  color: var(--navy-muted);
+  border: 1px solid rgba(255,255,255,0.18);
   padding: 2px 7px;
   border-radius: 4px;
-  background: var(--panel-2);
+  background: rgba(255,255,255,0.08);
 }
 
 .topbar-right {
@@ -102,7 +103,7 @@ body {
   gap: 20px;
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--navy-muted);
 }
 
 .stat-chip {
@@ -111,37 +112,51 @@ body {
   align-items: flex-end;
   line-height: 1.2;
 }
-.stat-chip b { color: var(--text); font-size: 13px; font-weight: 700; }
+.stat-chip b {
+  color: var(--navy-text);
+  font-size: 13px;
+  font-weight: 700;
+}
 
-/* ---- Tabs ---- */
+/* ============================================================
+   TAB BAR — light blue-gray strip, orange active underline
+   ============================================================ */
 .tabs {
   display: flex;
   gap: 0;
-  padding: 0 24px;
-  background: var(--panel);
+  padding: 0 20px;
+  background: var(--tabbar-bg);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
 .tab {
-  padding: 14px 18px;
+  padding: 12px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-dim);
+  color: var(--tab-text);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   user-select: none;
   white-space: nowrap;
-  transition: color 0.1s, border-color 0.1s;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+  border-radius: 2px 2px 0 0;
 }
-.tab:hover { color: var(--text); }
+.tab:hover {
+  color: var(--navy);
+  background: rgba(27,42,74,0.06);
+}
 .tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
-  font-weight: 600;
+  font-weight: 700;
+  background: rgba(240,90,26,0.05);
 }
 
-/* ---- Main content area ---- */
+/* ============================================================
+   CONTENT
+   ============================================================ */
 .content {
   flex: 1;
   padding: 24px;
@@ -161,9 +176,9 @@ body {
   margin-bottom: 16px;
 }
 .section-title { font-size: 17px; font-weight: 700; color: var(--text); }
-.section-sub { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+.section-sub   { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
 
-/* ---- Cards / panels ---- */
+/* ---- Panels / Cards ---- */
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -193,12 +208,13 @@ body {
 .kpi {
   background: var(--panel);
   border: 1px solid var(--border);
+  border-top: 3px solid var(--navy);  /* navy top accent stripe */
   border-radius: 8px;
   padding: 16px 18px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   transition: box-shadow 0.15s;
 }
-.kpi:hover { box-shadow: 0 3px 10px rgba(0,0,0,0.09); }
+.kpi:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 
 .kpi-label {
   font-size: 11px;
@@ -208,14 +224,12 @@ body {
   margin-bottom: 6px;
   font-weight: 600;
 }
-
 .kpi-value {
   font-size: 26px;
   font-weight: 700;
   font-family: var(--mono);
-  color: var(--text);
+  color: var(--navy);
 }
-
 .kpi-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
 /* ---- Buttons ---- */
@@ -233,29 +247,40 @@ button {
 }
 button:hover {
   background: var(--panel-2);
-  border-color: #c8cdd8;
+  border-color: #c0c8d8;
   box-shadow: 0 1px 3px rgba(0,0,0,0.07);
 }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
+
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
   font-weight: 600;
-  box-shadow: 0 2px 6px rgba(240,90,26,0.25);
+  box-shadow: 0 2px 6px rgba(240,90,26,0.28);
 }
 button.primary:hover {
   background: #d94d10;
   border-color: #d94d10;
-  box-shadow: 0 3px 10px rgba(240,90,26,0.35);
+  box-shadow: 0 3px 10px rgba(240,90,26,0.38);
 }
+
+/* Navy secondary button */
+button.secondary {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+  font-weight: 600;
+}
+button.secondary:hover { background: var(--navy-dim); border-color: var(--navy-dim); }
+
 button.ghost { background: transparent; border-color: transparent; }
 button.ghost:hover { background: var(--panel-2); border-color: var(--border); }
-button.small { padding: 5px 10px; font-size: 12px; }
+button.small  { padding: 5px 10px; font-size: 12px; }
 button.danger { color: var(--neg); border-color: var(--neg-bg); }
 button.danger:hover { background: var(--neg-bg); }
 
-/* ---- Form elements ---- */
+/* ---- Forms ---- */
 input, select, textarea {
   font-family: var(--sans);
   font-size: 13px;
@@ -269,8 +294,8 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(240,90,26,0.12);
+  border-color: var(--navy);
+  box-shadow: 0 0 0 3px rgba(27,42,74,0.1);
 }
 input::placeholder, textarea::placeholder { color: var(--text-faint); }
 
@@ -297,11 +322,11 @@ th {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  color: var(--text-faint);
+  color: var(--navy);
   padding: 10px 12px;
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid var(--navy);
   white-space: nowrap;
-  background: var(--panel-2);
+  background: #eef1f8;      /* matches tab bar */
 }
 
 td {
@@ -314,7 +339,12 @@ td {
 tr:hover td { background: #f0f4ff; }
 td.model-name { white-space: normal; font-weight: 600; max-width: 200px; }
 td.num { font-family: var(--mono); text-align: right; font-weight: 500; }
-.table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
 
 /* ---- Badges ---- */
 .badge {
@@ -325,12 +355,11 @@ td.num { font-family: var(--mono); text-align: right; font-weight: 500; }
   border-radius: 10px;
   font-family: var(--mono);
 }
-.badge.pos  { background: var(--pos-bg);  color: var(--pos); }
-.badge.neg  { background: var(--neg-bg);  color: var(--neg); }
-.badge.neu  { background: var(--neu-bg);  color: var(--neu); }
+.badge.pos  { background: var(--pos-bg); color: var(--pos); }
+.badge.neg  { background: var(--neg-bg); color: var(--neg); }
+.badge.neu  { background: var(--neu-bg); color: var(--neu); }
 .badge.gray { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
 
-/* Source badges */
 .src-badge {
   font-size: 10px;
   padding: 2px 7px;
@@ -347,27 +376,19 @@ td.num { font-family: var(--mono); text-align: right; font-weight: 500; }
 /* ---- Score bar ---- */
 .score-bar-wrap { display: flex; align-items: center; gap: 8px; }
 .score-bar-track {
-  flex: 1;
-  height: 6px;
+  flex: 1; height: 6px;
   background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-  min-width: 50px;
+  border-radius: 3px; overflow: hidden; min-width: 50px;
 }
 .score-bar-fill { height: 100%; border-radius: 3px; }
 .score-num { font-family: var(--mono); font-size: 12px; width: 30px; text-align: right; color: var(--text-dim); }
 
-/* ---- Empty / loading states ---- */
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-  color: var(--text-faint);
-}
+/* ---- Empty / loading ---- */
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text-faint); }
 .empty-state .icon  { font-size: 36px; margin-bottom: 10px; opacity: 0.5; }
 .empty-state .title { font-size: 15px; color: var(--text-dim); margin-bottom: 6px; font-weight: 600; }
-.empty-state .desc  { font-size: 12px; max-width: 420px; margin: 0 auto; color: var(--text-faint); }
+.empty-state .desc  { font-size: 12px; max-width: 420px; margin: 0 auto; }
 
-/* ---- Spinner ---- */
 .spinner {
   display: inline-block;
   width: 13px; height: 13px;
@@ -375,25 +396,18 @@ td.num { font-family: var(--mono); text-align: right; font-weight: 500; }
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
-  vertical-align: middle;
-  margin-right: 6px;
+  vertical-align: middle; margin-right: 6px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ---- Progress bar ---- */
 .progress-track {
-  height: 8px;
-  background: var(--panel-2);
+  height: 8px; background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-  margin-top: 8px;
+  border-radius: 4px; overflow: hidden; margin-top: 8px;
 }
 .progress-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 4px;
-  transition: width 0.2s ease;
+  height: 100%; background: var(--accent);
+  border-radius: 4px; transition: width 0.2s ease;
 }
 
 /* ---- Notice / banner ---- */
@@ -409,13 +423,12 @@ td.num { font-family: var(--mono); text-align: right; font-weight: 500; }
 }
 .notice.warn   { border-left-color: var(--neu); background: var(--neu-bg); }
 .notice.danger { border-left-color: var(--neg); background: var(--neg-bg); }
+.notice.info   { border-left-color: var(--navy); background: #eef1f8; }
 .notice b      { color: var(--text); }
 .notice code {
   font-family: var(--mono);
   background: rgba(0,0,0,0.06);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 11px;
+  padding: 1px 5px; border-radius: 3px; font-size: 11px;
 }
 
 /* ---- Links ---- */
@@ -425,22 +438,18 @@ a:hover { text-decoration: underline; }
 /* ---- Pills ---- */
 .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .pill {
-  font-size: 11px;
-  padding: 4px 11px;
+  font-size: 11px; padding: 4px 11px;
   border-radius: 12px;
   background: var(--panel);
   border: 1px solid var(--border);
-  color: var(--text-dim);
-  cursor: pointer;
-  font-weight: 500;
+  color: var(--tab-text);
+  cursor: pointer; font-weight: 500;
   transition: all 0.1s;
 }
-.pill:hover { border-color: var(--accent); color: var(--accent); }
+.pill:hover { border-color: var(--navy); color: var(--navy); background: #eef1f8; }
 .pill.active {
-  background: var(--accent-dim);
-  color: var(--accent);
-  border-color: var(--accent);
-  font-weight: 600;
+  background: var(--navy); color: #fff;
+  border-color: var(--navy); font-weight: 600;
 }
 
 /* ---- Model cards ---- */
@@ -448,14 +457,13 @@ a:hover { text-decoration: underline; }
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
+  padding: 12px 14px; margin-bottom: 8px;
   cursor: pointer;
   transition: border-color 0.12s, box-shadow 0.12s;
 }
 .model-card:hover {
-  border-color: #c0c8d8;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  border-color: var(--navy);
+  box-shadow: 0 2px 8px rgba(27,42,74,0.1);
 }
 .model-card.mapped   { border-left: 3px solid var(--pos); }
 .model-card.unmapped { border-left: 3px solid var(--text-faint); }
@@ -466,45 +474,32 @@ a:hover { text-decoration: underline; }
 /* ---- Scrollbars ---- */
 ::-webkit-scrollbar { height: 6px; width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #c0c8d8; }
+::-webkit-scrollbar-thumb { background: #c0c8d8; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--navy); }
 
 /* ---- Loading screen ---- */
 .loading-screen {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  gap: 16px;
-  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: 100vh; gap: 16px;
+  background: var(--navy);           /* navy splash on load */
 }
-.loading-screen .brand-mark { font-size: 28px; }
+.loading-screen .brand-mark { font-size: 28px; color: var(--accent); }
 .loading-screen .status-text {
-  font-size: 13px;
-  color: var(--text-dim);
-  text-align: center;
-  max-width: 500px;
-  line-height: 1.6;
+  font-size: 13px; color: var(--navy-muted);
+  text-align: center; max-width: 500px; line-height: 1.6;
 }
 
-/* ---- Admin panel specific ---- */
-.admin-section {
-  border-top: 1px solid var(--border);
-  margin-top: 24px;
-  padding-top: 20px;
-}
+/* ---- Utility ---- */
+.admin-section { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 20px; }
 
-/* ---- Stat summary row (top of tabs like E-com / Overview) ---- */
 .stat-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  margin-bottom: 20px;
+  gap: 14px; margin-bottom: 20px;
 }
 @media (max-width: 900px) { .stat-row { grid-template-columns: 1fr 1fr; } }
 
-/* ---- Colour-coded delta chips ---- */
 .delta-pos { color: var(--pos); font-weight: 600; font-size: 11px; font-family: var(--mono); }
 .delta-neg { color: var(--neg); font-weight: 600; font-size: 11px; font-family: var(--mono); }
 .delta-neu { color: var(--neu); font-size: 11px; font-family: var(--mono); }
