@@ -35,6 +35,9 @@ async function insertModel(supabase, row, modelId) {
     sentiment_frozen_at: addMonths(row.launch_date, 6),
     price_frozen_at:     addMonths(row.launch_date, 12),
     rank_original: `#${modelId}`,
+    // E-com URLs for daily price scraper (optional at add time)
+    amazon_url:   row.amazon_url   || null,
+    flipkart_url: row.flipkart_url || null,
   });
   if (modelErr) throw new Error(`Model insert failed: ${modelErr.message}`);
 
@@ -117,6 +120,46 @@ module.exports = async (req, res) => {
         success: true, inserted: results.length, errors,
         message: `${results.length} model(s) added.${errors.length ? ` ${errors.length} skipped.` : ''}`,
         models: results,
+      });
+    }
+
+    // ---- Bulk update e-com URLs only (no model insert) ----
+    if (action === 'update-ecom-urls') {
+      // POST /api/models?action=update-ecom-urls
+      // Body: { rows: [{model_name, amazon_url, flipkart_url}] }
+      // Matches by model name (case-insensitive trim), updates only the URL columns.
+      const { rows } = req.body || {};
+      if (!Array.isArray(rows) || !rows.length) {
+        return res.status(400).json({ error: 'rows array required.' });
+      }
+
+      // Fetch all models for name→id lookup
+      const { data: allModels } = await supabase.from('models').select('model_id, model');
+      const modelMap = {};
+      allModels.forEach(m => { modelMap[m.model.trim().toLowerCase()] = m.model_id; });
+
+      const results = [], errors = [];
+      for (const row of rows) {
+        const key = (row.model_name || '').trim().toLowerCase();
+        const model_id = modelMap[key];
+        if (!model_id) { errors.push(`"${row.model_name}" not found`); continue; }
+
+        // Build update object — only set fields that are non-empty in this row
+        const update = {};
+        if (row.amazon_url   && row.amazon_url.startsWith('http'))   update.amazon_url   = row.amazon_url.trim();
+        if (row.flipkart_url && row.flipkart_url.startsWith('http')) update.flipkart_url = row.flipkart_url.trim();
+        if (!Object.keys(update).length) { errors.push(`No valid URLs for "${row.model_name}"`); continue; }
+
+        const { error: updErr } = await supabase.from('models').update(update).eq('model_id', model_id);
+        if (updErr) { errors.push(`Update failed for "${row.model_name}": ${updErr.message}`); continue; }
+        results.push(row.model_name);
+      }
+
+      return res.status(200).json({
+        success: true,
+        updated: results.length,
+        errors,
+        message: `${results.length} model(s) updated.${errors.length ? ` ${errors.length} skipped.` : ''}`,
       });
     }
 
