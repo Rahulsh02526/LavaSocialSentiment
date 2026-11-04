@@ -141,6 +141,21 @@ function renderAdminView() {
         </div>
         <div></div>
 
+        <!-- E-com URLs — used by daily price scraper -->
+        <div style="grid-column:1/-1; margin-top:8px;">
+          <div style="font-size:11px; font-weight:700; letter-spacing:0.1em; color:var(--text-faint); text-transform:uppercase; margin-bottom:10px;">
+            E-com URLs <span style="font-weight:400;">(for daily price + review scraping)</span>
+          </div>
+        </div>
+        <div class="field" style="grid-column:1/3;">
+          <label>Amazon Product URL</label>
+          <input type="url" id="am_amazon_url" placeholder="https://www.amazon.in/dp/...">
+        </div>
+        <div class="field" style="grid-column:3/4;">
+          <label>Flipkart Product URL</label>
+          <input type="url" id="am_flipkart_url" placeholder="https://www.flipkart.com/...">
+        </div>
+
       </div>
 
       <div style="margin-top:18px; display:flex; gap:10px; align-items:center;">
@@ -546,6 +561,8 @@ async function submitAddModel() {
     os:                 document.getElementById('am_os').value.trim(),
     connectivity:       document.getElementById('am_connectivity').value.trim(),
     weight_g:           document.getElementById('am_weight').value,
+    amazon_url:         (document.getElementById('am_amazon_url')?.value || '').trim() || null,
+    flipkart_url:       (document.getElementById('am_flipkart_url')?.value || '').trim() || null,
   };
 
   statusEl.innerHTML = `<div class="notice"><span class="spinner"></span> Adding model...</div>`;
@@ -734,7 +751,17 @@ async function submitVariantPrice() {
 }
 
 // ── Marketing Assets Excel Upload ──
-const ASSETS_COLUMNS = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
+// Supports up to 15 Instagram and 15 X/Twitter links per model.
+// Excel columns: Model | Website | KV1-3 | YouTube | X1..X15 | IG1..IG15 | Facebook | Notes
+// Also supports legacy single-column format (x_twitter, instagram) for backward compat.
+const ASSETS_COLUMNS = [
+  'model','official_website','kv1','kv2','kv3','youtube',
+  // Up to 15 X/Twitter posts
+  'x1','x2','x3','x4','x5','x6','x7','x8','x9','x10','x11','x12','x13','x14','x15',
+  // Up to 15 Instagram posts
+  'ig1','ig2','ig3','ig4','ig5','ig6','ig7','ig8','ig9','ig10','ig11','ig12','ig13','ig14','ig15',
+  'facebook','notes'
+];
 
 async function parseAssetsXlsx() {
   const file = document.getElementById('assetsXlsx').files[0];
@@ -753,7 +780,10 @@ async function parseAssetsXlsx() {
 
       // Get the range
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:K100');
-      const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
+      const urlFields = ['official_website','kv1','kv2','kv3','youtube','facebook',
+        ...Array.from({length:15},(_,i)=>`x${i+1}`),
+        ...Array.from({length:15},(_,i)=>`ig${i+1}`)
+      ];
 
       // Auto-detect column layout by reading the header row (row index 0 = Excel row 1)
       // Supports two formats:
@@ -770,17 +800,28 @@ async function parseAssetsXlsx() {
       // 'model id' column is skipped; we want the 'model' column (exact match)
       let modelCol = -1;
       const colKeyMap = {}; // column index → field key
+      // Build header→field map including numbered variants (x1..x15, ig1..ig15)
       const fieldByHeader = {
         'model': 'model', 'official website': 'official_website', 'website': 'official_website',
         'kv 1': 'kv1', 'kv1': 'kv1',
         'kv 2': 'kv2', 'kv2': 'kv2',
         'kv 3': 'kv3', 'kv3': 'kv3',
         'yt': 'youtube', 'youtube': 'youtube',
-        'x': 'x_twitter', 'twitter': 'x_twitter',
-        'instagram': 'instagram', 'ig': 'instagram',
+        // Legacy single X/IG columns → map to x1/ig1
+        'x': 'x1', 'x_twitter': 'x1', 'twitter': 'x1',
+        'instagram': 'ig1', 'ig': 'ig1',
         'facebook': 'facebook', 'fb': 'facebook',
         'notes': 'notes',
       };
+      // Add x1..x15 and ig1..ig15 dynamically
+      for (let i = 1; i <= 15; i++) {
+        fieldByHeader[`x${i}`] = `x${i}`;
+        fieldByHeader[`x ${i}`] = `x${i}`;
+        fieldByHeader[`twitter ${i}`] = `x${i}`;
+        fieldByHeader[`ig${i}`] = `ig${i}`;
+        fieldByHeader[`ig ${i}`] = `ig${i}`;
+        fieldByHeader[`instagram ${i}`] = `ig${i}`;
+      }
       for (let C = 0; C < maxCols; C++) {
         const h = headerRow[C];
         if (!h || h === 'model id') continue; // skip Model ID column
@@ -793,7 +834,12 @@ async function parseAssetsXlsx() {
 
       // Fallback: if header detection failed, assume old format (A=model, B=website...)
       if (modelCol === -1) {
-        const fallbackKeys = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
+        // Fallback column order: model, website, kv1-3, youtube, x1-15, ig1-15, facebook, notes
+        const fallbackKeys = ['model','official_website','kv1','kv2','kv3','youtube',
+          ...Array.from({length:15},(_,i)=>`x${i+1}`),
+          ...Array.from({length:15},(_,i)=>`ig${i+1}`),
+          'facebook','notes'
+        ];
         fallbackKeys.forEach((k, i) => { colKeyMap[i] = k; });
         modelCol = 0;
       }
@@ -813,7 +859,13 @@ async function parseAssetsXlsx() {
         rows.push(row);
       }
 
-      const validRows = rows.filter(r => r.model && urlFields.some(f => r[f] && r[f].startsWith('http')));
+      // All possible URL fields including multi-numbered ones
+      const allUrlFields = ['official_website','kv1','kv2','kv3','youtube','facebook',
+        ...Array.from({length:15},(_,i)=>`x${i+1}`),
+        ...Array.from({length:15},(_,i)=>`ig${i+1}`)
+      ];
+
+      const validRows = rows.filter(r => r.model && allUrlFields.some(f => r[f] && r[f].startsWith('http')));
       window._pendingAssets = validRows; // store globally to avoid large onclick string
 
       if (!validRows.length) {
@@ -822,7 +874,6 @@ async function parseAssetsXlsx() {
         const colMapDump = Object.entries(colKeyMap).map(([c,f]) => `col${c}→${f}`).join(', ');
         const firstRow = rows[0];
         const firstRowDump = firstRow ? Object.entries(firstRow).map(([k,v]) => `${k}="${v}"`).join(', ') : 'no rows parsed';
-        // Also check raw cell values from row 1 (first data row)
         const rawRow1 = [];
         for (let C = 0; C <= Math.min(range.e.c, 9); C++) {
           const cell = ws[XLSX.utils.encode_cell({ r: 1, c: C })];
@@ -838,19 +889,33 @@ async function parseAssetsXlsx() {
         return;
       }
 
+      // Count X and IG links per model for preview summary
       status.innerHTML = '';
       preview.innerHTML = `
         <div style="font-size:12px; color:var(--text-faint); margin-bottom:10px;">${validRows.length} model(s) ready to upload</div>
         <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-bottom:12px;">
           <table>
-            <thead><tr><th>Model</th><th>Site</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YT</th><th>X</th><th>IG</th><th>FB</th></tr></thead>
+            <thead><tr><th>Model</th><th>Site</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YT</th><th>X Posts</th><th>IG Posts</th><th>FB</th></tr></thead>
             <tbody>
-              ${validRows.map(r => `<tr>
-                <td style="font-weight:500; font-size:11px;">${escapeHtml(r.model)}</td>
-                ${urlFields.map(f => `<td style="text-align:center;">${r[f] && r[f].startsWith('http')
-                  ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--pos); font-size:11px;">✓</a>`
-                  : '<span style="color:var(--border); font-size:11px;">–</span>'}</td>`).join('')}
-              </tr>`).join('')}
+              ${validRows.map(r => {
+                // Count how many X and IG links are present
+                const xCount = Array.from({length:15},(_,i)=>`x${i+1}`).filter(f=>r[f]&&r[f].startsWith('http')).length;
+                const igCount = Array.from({length:15},(_,i)=>`ig${i+1}`).filter(f=>r[f]&&r[f].startsWith('http')).length;
+                const checkOrDash = (field) => r[field] && r[field].startsWith('http')
+                  ? `<a href="${escapeHtml(r[field])}" target="_blank" style="color:var(--pos); font-size:11px;">✓</a>`
+                  : '<span style="color:var(--border); font-size:11px;">–</span>';
+                return `<tr>
+                  <td style="font-weight:500; font-size:11px;">${escapeHtml(r.model)}</td>
+                  <td style="text-align:center;">${checkOrDash('official_website')}</td>
+                  <td style="text-align:center;">${checkOrDash('kv1')}</td>
+                  <td style="text-align:center;">${checkOrDash('kv2')}</td>
+                  <td style="text-align:center;">${checkOrDash('kv3')}</td>
+                  <td style="text-align:center;">${checkOrDash('youtube')}</td>
+                  <td style="text-align:center; font-size:12px; font-weight:600; color:${xCount>0?'var(--pos)':'var(--border)'};">${xCount > 0 ? xCount+'×' : '–'}</td>
+                  <td style="text-align:center; font-size:12px; font-weight:600; color:${igCount>0?'var(--pos)':'var(--border)'};">${igCount > 0 ? igCount+'×' : '–'}</td>
+                  <td style="text-align:center;">${checkOrDash('facebook')}</td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>
