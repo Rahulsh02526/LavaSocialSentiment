@@ -3,6 +3,15 @@
 // SPECS DATABASE VIEW — Complete specs + Launch Date + Pricing
 // ============================================================
 
+// Format "4 Nov 2026" — also defined in app_ecom.js; safe to call if loaded first
+function fmtDate(d) {
+  if (!d) return null;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dt = new Date(d);
+  if (isNaN(dt)) return d;
+  return `${dt.getDate()} ${months[dt.getMonth()]} ${dt.getFullYear()}`;
+}
+
 let specsSortKey = 'model';
 let specsSortDir = 'asc';
 let specsConnFilter = 'all';
@@ -44,6 +53,7 @@ function renderSpecsView() {
               <th>OS</th>
               <th>Connectivity</th>
               <th onclick="sortSpecs('weight_g')" style="cursor:pointer;">Weight ${specsSortKey==='weight_g'?(specsSortDir==='asc'?'↑':'↓'):''}</th>
+              <th title="Where the spec data was sourced from">Spec Source</th>
             </tr>
           </thead>
           <tbody id="specsTbody"></tbody>
@@ -122,6 +132,29 @@ function renderSpecsTable() {
     const diffStr   = priceDiff === null ? '' :
       ` <span style="font-size:10px;${diffColor}">(${priceDiff > 0 ? '+' : ''}${priceDiff.toLocaleString('en-IN')})</span>`;
 
+    // Source of current price: prefer scraper source, fall back to 'manual'
+    const priceSource = phone.amazon_price && phone.flipkart_price
+      ? (phone.amazon_price <= phone.flipkart_price ? 'amazon' : 'flipkart')
+      : phone.amazon_price ? 'amazon'
+      : phone.flipkart_price ? 'flipkart'
+      : (currentP && currentP !== launchP ? 'manual' : null);
+    const srcLabel = priceSource === 'amazon'   ? '<span style="font-size:9px; color:#FF9900; font-weight:600;"> ● Amazon</span>'
+                   : priceSource === 'flipkart' ? '<span style="font-size:9px; color:#2874F0; font-weight:600;"> ● Flipkart</span>'
+                   : priceSource === 'manual'   ? '<span style="font-size:9px; color:var(--text-faint);"> ● Manual</span>'
+                   : '';
+
+    // Format "as of" date
+    const asOfStr = phone.price_last_updated
+      ? `<div style="font-size:10px; color:var(--text-faint);">as of ${fmtDate(phone.price_last_updated)}</div>` : '';
+
+    // Spec source badge (from specs table source_confidence or spec_source field)
+    const specSrc = spec?.spec_source || spec?.source_confidence;
+    const specSrcLabel = specSrc === 'amazon'   ? '<span style="font-size:9px; padding:1px 4px; background:#FF990022; color:#CC7700; border-radius:3px; white-space:nowrap;">Amazon</span>'
+                       : specSrc === 'gsmarena' ? '<span style="font-size:9px; padding:1px 4px; background:#1a73e822; color:#1a73e8; border-radius:3px;">GSMArena</span>'
+                       : specSrc === 'manual'   ? '<span style="font-size:9px; padding:1px 4px; background:var(--border-faint,#eee); color:var(--text-faint); border-radius:3px;">Manual</span>'
+                       : specSrc              ? `<span style="font-size:9px; padding:1px 4px; background:var(--border-faint,#eee); color:var(--text-faint); border-radius:3px;">${escapeHtml(specSrc)}</span>`
+                       : '<span style="font-size:9px; color:var(--text-faint);">–</span>';
+
     return `
     <tr>
       <td class="model-name">
@@ -133,9 +166,10 @@ function renderSpecsTable() {
         ${phone.launch_date ? `<div style="font-size:10px; color:var(--text-faint);">${monthsAgo(phone.launch_date)}</div>` : ''}
       </td>
       <td class="num">${launchP ? '₹'+Math.round(launchP).toLocaleString('en-IN') : '–'}</td>
-      <td class="num">
-        ${currentP ? '₹'+Math.round(currentP).toLocaleString('en-IN') : '–'}
-        ${diffStr}
+      <td class="num" style="line-height:1.5;">
+        ${currentP ? '₹'+Math.round(currentP).toLocaleString('en-IN') : '–'}${diffStr}
+        ${srcLabel}
+        ${asOfStr}
       </td>
       <td>${spec ? (isFiveG(spec) ? '<span class="badge pos">5G</span>' : '<span class="badge gray">4G</span>') : '<span class="badge gray">?</span>'}</td>
       <td style="font-size:11px; max-width:160px; white-space:normal;">${spec?.processor || '–'}</td>
@@ -149,6 +183,7 @@ function renderSpecsTable() {
       <td style="font-size:11px;">${spec?.os || '–'}</td>
       <td style="font-size:11px; max-width:140px; white-space:normal;">${spec?.connectivity || '–'}</td>
       <td class="num">${spec?.weight_g ? spec.weight_g+'g' : '–'}</td>
+      <td style="text-align:center;">${specSrcLabel}</td>
     </tr>`;
   }).join('');
 }
