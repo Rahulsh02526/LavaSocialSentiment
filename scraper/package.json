@@ -1,0 +1,16 @@
+{
+  "name": "sip-ecom-scraper",
+  "version": "1.0.0",
+  "description": "Daily e-com price and comment scraper for LAVA SIP",
+  "main": "scrape-ecom.js",
+  "scripts": {
+    "scrape": "node scrape-ecom.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "playwright": "^1.40.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
