@@ -154,7 +154,8 @@ module.exports = async (req, res) => {
 
     if (action === 'assets') {
       // POST /api/prices?action=assets
-      // Body: { rows: [{model, official_website, kv1, kv2, kv3, youtube, x_twitter, instagram, facebook, notes}] }
+      // Body: { rows: [{model, official_website, kv1, kv2, kv3, youtube,
+      //                 x1..x15, ig1..ig15, facebook, notes}] }
       const { rows } = req.body || {};
       if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows array required.' });
 
@@ -171,16 +172,28 @@ module.exports = async (req, res) => {
 
         const assetTypes = [
           { type: 'website',   platform: 'brand_site',  url: row.official_website, campaign_name: 'Official Website' },
-          { type: 'kv',        platform: 'print_digital', url: row.kv1, campaign_name: 'KV 1' },
-          { type: 'kv',        platform: 'print_digital', url: row.kv2, campaign_name: 'KV 2' },
-          { type: 'kv',        platform: 'print_digital', url: row.kv3, campaign_name: 'KV 3' },
-          { type: 'video',     platform: 'YouTube',       url: row.youtube, campaign_name: 'Official YouTube' },
-          { type: 'post',      platform: 'X',             url: row.x_twitter, campaign_name: 'X / Twitter' },
-          { type: 'post',      platform: 'Instagram',     url: row.instagram, campaign_name: 'Instagram' },
-          { type: 'post',      platform: 'Facebook',      url: row.facebook, campaign_name: 'Facebook' },
+          { type: 'kv',        platform: 'print_digital', url: row.kv1, campaign_name: 'KV 1',          sequence_num: 1 },
+          { type: 'kv',        platform: 'print_digital', url: row.kv2, campaign_name: 'KV 2',          sequence_num: 2 },
+          { type: 'kv',        platform: 'print_digital', url: row.kv3, campaign_name: 'KV 3',          sequence_num: 3 },
+          { type: 'video',     platform: 'YouTube',       url: row.youtube, campaign_name: 'Official YouTube', sequence_num: 1 },
+          { type: 'post',      platform: 'Facebook',      url: row.facebook, campaign_name: 'Facebook', sequence_num: 1 },
+          // X / Twitter: up to 15 posts (x1..x15)
+          ...Array.from({length: 15}, (_, i) => ({
+            type: 'post', platform: 'X',
+            url: row[`x${i+1}`],
+            campaign_name: `X Post ${i+1}`,
+            sequence_num: i + 1,
+          })),
+          // Instagram: up to 15 posts (ig1..ig15)
+          ...Array.from({length: 15}, (_, i) => ({
+            type: 'post', platform: 'Instagram',
+            url: row[`ig${i+1}`],
+            campaign_name: `Instagram Post ${i+1}`,
+            sequence_num: i + 1,
+          })),
         ].filter(a => a.url && String(a.url).trim().startsWith('http'));
 
-        if (!assetTypes.length) { errors.push(`No valid URLs for "\${modelName}"`); continue; }
+        if (!assetTypes.length) { errors.push(`No valid URLs for "${modelName}"`); continue; }
 
         const toInsert = assetTypes.map(a => ({
           model_id,
@@ -188,13 +201,18 @@ module.exports = async (req, res) => {
           platform: a.platform,
           campaign_name: a.campaign_name,
           url: String(a.url).trim(),
+          sequence_num: a.sequence_num || 1,
           notes: row.notes || null,
           tags: [],
           asset_date: null,
         }));
 
-        // insert all assets in one batch — delete existing first to avoid duplicates
-        await supabase.from('marketing_assets').delete().eq('model_id', model_id);
+        // Delete only the platforms that have new data — preserves platforms not in this upload
+        const platformsInUpload = [...new Set(toInsert.map(a => a.platform))];
+        for (const platform of platformsInUpload) {
+          await supabase.from('marketing_assets').delete()
+            .eq('model_id', model_id).eq('platform', platform);
+        }
         if (toInsert.length > 0) {
           const { error: insertErr } = await supabase.from('marketing_assets').insert(toInsert);
           if (insertErr) { errors.push(`Insert failed for "${modelName}": ${insertErr.message}`); continue; }
