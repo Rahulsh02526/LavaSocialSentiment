@@ -515,46 +515,52 @@ function parseXlsxFile(file, columnKeys) {
 
 // ── Template download helpers — generate CSV on-the-fly, no server file needed ──
 
+// Helper: wrap a cell value in quotes if it contains comma/quote/newline
+function _csvCell(v) {
+  const s = (v === null || v === undefined) ? '' : String(v);
+  return (s.includes(',') || s.includes('"') || s.includes('\n'))
+    ? '"' + s.replace(/"/g, '""') + '"'
+    : s;
+}
+
+function _csvRow(arr) {
+  return arr.map(_csvCell).join(',');
+}
+
 function downloadModelTemplate() {
   // Columns match the bulk model upload parser in parseModelsXlsx()
-  const headers = [
+  const headers = _csvRow([
     'model','brand','launch_date','launch_price_inr',
     'amazon_available','flipkart_available','price_segment',
     'processor','ram_variants','storage_variants',
     'display','battery_mah','fast_charging_w',
     'rear_camera','front_camera','os','connectivity','weight_g',
     'amazon_url','flipkart_url'
-  ].join(',');
-  const example = [
+  ]);
+  // Example row — values with commas are auto-quoted by _csvRow
+  const example = _csvRow([
     'LAVA Model X','lava','2024-11-01','12999',
     'Yes','Yes','entry_mid',
     'Snapdragon 4 Gen 2','4GB,6GB','64GB,128GB',
     '6.5" HD+ 90Hz','5000','18W',
     '50MP+2MP','8MP','Android 14','4G,WiFi,BT,NFC','195',
     'https://www.amazon.in/dp/EXAMPLE','https://www.flipkart.com/EXAMPLE'
-  ].join(',');
-  const csv = headers + '\n' + example;
-  _downloadCsv(csv, 'SIP_Model_Upload_Template.csv');
+  ]);
+  _downloadCsv(headers + '\n' + example, 'SIP_Model_Upload_Template.csv');
 }
 
 function downloadRatingsTemplate() {
-  // Columns: model name + amazon/flipkart rating + review count
-  const headers = 'model_name,amazon_rating,amazon_review_count,flipkart_rating,flipkart_review_count';
-  const rows = STATE.phones.map(p =>
-    `"${p.model.replace(/"/g,'""')}",,,,`
-  );
-  const csv = [headers, ...rows].join('\n');
-  _downloadCsv(csv, 'SIP_Ecom_Ratings_Template.csv');
+  const headers = _csvRow(['model_name','amazon_rating','amazon_review_count','flipkart_rating','flipkart_review_count']);
+  const phones = (typeof STATE !== 'undefined' && STATE.phones) ? STATE.phones : [];
+  const rows = phones.map(p => _csvRow([p.model, '', '', '', '']));
+  _downloadCsv([headers, ...rows].join('\n'), 'SIP_Ecom_Ratings_Template.csv');
 }
 
 function downloadEcomUrlTemplate() {
-  // For bulk e-com URL update — model names pre-filled
-  const headers = 'model_name,amazon_url,flipkart_url';
-  const rows = STATE.phones.map(p =>
-    `"${p.model.replace(/"/g,'""')}","${p.amazon_url||''}","${p.flipkart_url||''}"`
-  );
-  const csv = [headers, ...rows].join('\n');
-  _downloadCsv(csv, 'SIP_EcomURLs_Template.csv');
+  const headers = _csvRow(['model_name','amazon_url','flipkart_url']);
+  const phones = (typeof STATE !== 'undefined' && STATE.phones) ? STATE.phones : [];
+  const rows = phones.map(p => _csvRow([p.model, p.amazon_url || '', p.flipkart_url || '']));
+  _downloadCsv([headers, ...rows].join('\n'), 'SIP_EcomURLs_Template.csv');
 }
 
 // ── Bulk E-com URL upload (admin panel) ──
