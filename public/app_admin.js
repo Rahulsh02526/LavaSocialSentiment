@@ -141,21 +141,6 @@ function renderAdminView() {
         </div>
         <div></div>
 
-        <!-- E-com URLs — used by daily price scraper -->
-        <div style="grid-column:1/-1; margin-top:8px;">
-          <div style="font-size:11px; font-weight:700; letter-spacing:0.1em; color:var(--text-faint); text-transform:uppercase; margin-bottom:10px;">
-            E-com URLs <span style="font-weight:400;">(for daily price + review scraping)</span>
-          </div>
-        </div>
-        <div class="field" style="grid-column:1/3;">
-          <label>Amazon Product URL</label>
-          <input type="url" id="am_amazon_url" placeholder="https://www.amazon.in/dp/...">
-        </div>
-        <div class="field" style="grid-column:3/4;">
-          <label>Flipkart Product URL</label>
-          <input type="url" id="am_flipkart_url" placeholder="https://www.flipkart.com/...">
-        </div>
-
       </div>
 
       <div style="margin-top:18px; display:flex; gap:10px; align-items:center;">
@@ -205,6 +190,22 @@ function renderAdminView() {
 
     <!-- VARIANT PRICING -->
     <div id="variantPricingSection"></div>
+
+    <!-- BULK E-COM URL UPDATE -->
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-title" style="margin-bottom:4px;">🔗 Bulk Update E-com URLs (Amazon + Flipkart)</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">
+        Upload a CSV with model names + Amazon/Flipkart product URLs. These URLs are used by the daily price scraper.
+        Download the template below — model names are pre-filled from the platform.
+      </div>
+      <div id="urlBulkStatus"></div>
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <input type="file" id="urlBulkFile" accept=".csv,.xlsx,.xls" style="font-size:12px; color:var(--text-dim);" onchange="previewUrlBulkAdmin(this)">
+        <a href="#" onclick="event.preventDefault(); downloadEcomUrlTemplate()" style="font-size:11px; color:var(--accent);">⬇ Download Template</a>
+      </div>
+      <div style="font-size:11px; color:var(--text-faint);">Columns: model_name · amazon_url · flipkart_url</div>
+      <div id="urlBulkPreview" style="margin-top:12px;"></div>
+    </div>
 
     <!-- ECOM COMMENTS PASTE UPLOAD -->
     <div class="panel" style="margin-bottom:20px;">
@@ -512,12 +513,174 @@ function parseXlsxFile(file, columnKeys) {
   });
 }
 
-// ── Template download helpers (redirect to static files if hosted, else alert) ──
+// ── Template download helpers — generate CSV on-the-fly, no server file needed ──
+
 function downloadModelTemplate() {
-  alert('Download "SIP_Model_Upload_Template.xlsx" from the files shared by the platform admin, or ask them to place it in /public/templates/.');
+  // Columns match the bulk model upload parser in parseModelsXlsx()
+  const headers = [
+    'model','brand','launch_date','launch_price_inr',
+    'amazon_available','flipkart_available','price_segment',
+    'processor','ram_variants','storage_variants',
+    'display','battery_mah','fast_charging_w',
+    'rear_camera','front_camera','os','connectivity','weight_g',
+    'amazon_url','flipkart_url'
+  ].join(',');
+  const example = [
+    'LAVA Model X','lava','2024-11-01','12999',
+    'Yes','Yes','entry_mid',
+    'Snapdragon 4 Gen 2','4GB,6GB','64GB,128GB',
+    '6.5" HD+ 90Hz','5000','18W',
+    '50MP+2MP','8MP','Android 14','4G,WiFi,BT,NFC','195',
+    'https://www.amazon.in/dp/EXAMPLE','https://www.flipkart.com/EXAMPLE'
+  ].join(',');
+  const csv = headers + '\n' + example;
+  _downloadCsv(csv, 'SIP_Model_Upload_Template.csv');
 }
+
 function downloadRatingsTemplate() {
-  alert('Download "SIP_Ecom_Ratings_Template.xlsx" from the files shared by the platform admin.');
+  // Columns: model name + amazon/flipkart rating + review count
+  const headers = 'model_name,amazon_rating,amazon_review_count,flipkart_rating,flipkart_review_count';
+  const rows = STATE.phones.map(p =>
+    `"${p.model.replace(/"/g,'""')}",,,,`
+  );
+  const csv = [headers, ...rows].join('\n');
+  _downloadCsv(csv, 'SIP_Ecom_Ratings_Template.csv');
+}
+
+function downloadEcomUrlTemplate() {
+  // For bulk e-com URL update — model names pre-filled
+  const headers = 'model_name,amazon_url,flipkart_url';
+  const rows = STATE.phones.map(p =>
+    `"${p.model.replace(/"/g,'""')}","${p.amazon_url||''}","${p.flipkart_url||''}"`
+  );
+  const csv = [headers, ...rows].join('\n');
+  _downloadCsv(csv, 'SIP_EcomURLs_Template.csv');
+}
+
+// ── Bulk E-com URL upload (admin panel) ──
+
+async function previewUrlBulkAdmin(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const preview = document.getElementById('urlBulkPreview');
+  const status  = document.getElementById('urlBulkStatus');
+  preview.innerHTML = '<div class="notice"><span class="spinner"></span> Reading file…</div>';
+  status.innerHTML  = '';
+
+  let rows = [];
+
+  try {
+    if (file.name.endsWith('.csv')) {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase().replace(/\s+/g,'_'));
+      const nameIdx = rawHeaders.findIndex(h => h === 'model_name' || h === 'model');
+      const amzIdx  = rawHeaders.findIndex(h => h.includes('amazon'));
+      const fkIdx   = rawHeaders.findIndex(h => h.includes('flipkart'));
+      if (nameIdx === -1) { preview.innerHTML = '<div class="notice danger">Column "model_name" not found.</div>'; return; }
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g,''));
+        const model_name   = cols[nameIdx] || '';
+        const amazon_url   = amzIdx  >= 0 ? (cols[amzIdx]  || null) : null;
+        const flipkart_url = fkIdx   >= 0 ? (cols[fkIdx]   || null) : null;
+        if (model_name) rows.push({ model_name, amazon_url, flipkart_url });
+      }
+    } else {
+      if (typeof XLSX === 'undefined') { preview.innerHTML = '<div class="notice danger">SheetJS not loaded — please use CSV format.</div>'; return; }
+      const buf  = await file.arrayBuffer();
+      const wb   = XLSX.read(buf, { type: 'array' });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      rows = data.map(r => {
+        const get = (...keys) => {
+          for (const k of keys) {
+            const found = Object.keys(r).find(h => h.trim().toLowerCase().replace(/\s+/g,'_') === k);
+            if (found && r[found]) return String(r[found]).trim();
+          }
+          return null;
+        };
+        return {
+          model_name:   get('model_name','model'),
+          amazon_url:   get('amazon_url','amazon') || null,
+          flipkart_url: get('flipkart_url','flipkart') || null,
+        };
+      }).filter(r => r.model_name);
+    }
+  } catch(e) {
+    preview.innerHTML = `<div class="notice danger">Parse error: ${e.message}</div>`;
+    return;
+  }
+
+  if (!rows.length) {
+    preview.innerHTML = '<div class="notice danger">No data rows found. Use columns: model_name, amazon_url, flipkart_url</div>';
+    return;
+  }
+
+  // Match to known models
+  const modelMap = {};
+  (STATE.phones || []).forEach(p => { modelMap[p.model.trim().toLowerCase()] = p; });
+  const matched   = rows.filter(r => modelMap[(r.model_name||'').trim().toLowerCase()]);
+  const unmatched = rows.filter(r => !modelMap[(r.model_name||'').trim().toLowerCase()]);
+
+  window._pendingUrlRows = matched;
+
+  preview.innerHTML = `
+    <div style="font-size:12px; color:var(--text-faint); margin-bottom:8px;">
+      ${matched.length} matched · ${unmatched.length} unmatched
+      ${unmatched.length ? `<div style="color:var(--neg); font-size:11px; margin-top:4px;">Not found: ${unmatched.map(r => escapeHtml(r.model_name)).join(', ')}</div>` : ''}
+    </div>
+    <div class="table-wrap" style="max-height:220px; overflow-y:auto; margin-bottom:10px;">
+      <table>
+        <thead><tr><th>Model</th><th>Amazon URL</th><th>Flipkart URL</th></tr></thead>
+        <tbody>
+          ${matched.map(r => `<tr>
+            <td style="font-size:11px; font-weight:500;">${escapeHtml(r.model_name)}</td>
+            <td style="font-size:10px; color:${r.amazon_url   ? '#FF9900'   : 'var(--border)'};">${r.amazon_url   ? '✓ set' : '–'}</td>
+            <td style="font-size:10px; color:${r.flipkart_url ? '#2874F0' : 'var(--border)'};">${r.flipkart_url ? '✓ set' : '–'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${matched.length ? `
+    <div style="display:flex; gap:10px;">
+      <button class="primary" onclick="submitUrlBulkAdmin()">✓ Save URLs for ${matched.length} Model(s)</button>
+      <button class="ghost" onclick="document.getElementById('urlBulkPreview').innerHTML=''; window._pendingUrlRows=null;">Cancel</button>
+    </div>` : ''}
+  `;
+}
+
+async function submitUrlBulkAdmin() {
+  const rows = window._pendingUrlRows;
+  if (!rows || !rows.length) return;
+  const status = document.getElementById('urlBulkStatus');
+  status.innerHTML = '<div class="notice"><span class="spinner"></span> Saving…</div>';
+  try {
+    const result = await apiPost('/api/models?action=update-ecom-urls', { rows });
+    // Update STATE so template download reflects new URLs immediately
+    rows.forEach(r => {
+      const phone = (STATE.phones || []).find(p => p.model.trim().toLowerCase() === r.model_name.trim().toLowerCase());
+      if (phone) {
+        if (r.amazon_url)   phone.amazon_url   = r.amazon_url;
+        if (r.flipkart_url) phone.flipkart_url = r.flipkart_url;
+      }
+    });
+    window._pendingUrlRows = null;
+    document.getElementById('urlBulkPreview').innerHTML = '';
+    status.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${result.message}</div>`;
+  } catch(e) {
+    status.innerHTML = `<div class="notice danger">Error: ${e.message}</div>`;
+  }
+}
+
+function _downloadCsv(csv, filename) {
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
 }
 async function submitAddModel() {
   const statusEl = document.getElementById('addModelStatus');
@@ -561,8 +724,6 @@ async function submitAddModel() {
     os:                 document.getElementById('am_os').value.trim(),
     connectivity:       document.getElementById('am_connectivity').value.trim(),
     weight_g:           document.getElementById('am_weight').value,
-    amazon_url:         (document.getElementById('am_amazon_url')?.value || '').trim() || null,
-    flipkart_url:       (document.getElementById('am_flipkart_url')?.value || '').trim() || null,
   };
 
   statusEl.innerHTML = `<div class="notice"><span class="spinner"></span> Adding model...</div>`;
@@ -751,17 +912,7 @@ async function submitVariantPrice() {
 }
 
 // ── Marketing Assets Excel Upload ──
-// Supports up to 15 Instagram and 15 X/Twitter links per model.
-// Excel columns: Model | Website | KV1-3 | YouTube | X1..X15 | IG1..IG15 | Facebook | Notes
-// Also supports legacy single-column format (x_twitter, instagram) for backward compat.
-const ASSETS_COLUMNS = [
-  'model','official_website','kv1','kv2','kv3','youtube',
-  // Up to 15 X/Twitter posts
-  'x1','x2','x3','x4','x5','x6','x7','x8','x9','x10','x11','x12','x13','x14','x15',
-  // Up to 15 Instagram posts
-  'ig1','ig2','ig3','ig4','ig5','ig6','ig7','ig8','ig9','ig10','ig11','ig12','ig13','ig14','ig15',
-  'facebook','notes'
-];
+const ASSETS_COLUMNS = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
 
 async function parseAssetsXlsx() {
   const file = document.getElementById('assetsXlsx').files[0];
@@ -780,10 +931,7 @@ async function parseAssetsXlsx() {
 
       // Get the range
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:K100');
-      const urlFields = ['official_website','kv1','kv2','kv3','youtube','facebook',
-        ...Array.from({length:15},(_,i)=>`x${i+1}`),
-        ...Array.from({length:15},(_,i)=>`ig${i+1}`)
-      ];
+      const urlFields = ['official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook'];
 
       // Auto-detect column layout by reading the header row (row index 0 = Excel row 1)
       // Supports two formats:
@@ -800,28 +948,17 @@ async function parseAssetsXlsx() {
       // 'model id' column is skipped; we want the 'model' column (exact match)
       let modelCol = -1;
       const colKeyMap = {}; // column index → field key
-      // Build header→field map including numbered variants (x1..x15, ig1..ig15)
       const fieldByHeader = {
         'model': 'model', 'official website': 'official_website', 'website': 'official_website',
         'kv 1': 'kv1', 'kv1': 'kv1',
         'kv 2': 'kv2', 'kv2': 'kv2',
         'kv 3': 'kv3', 'kv3': 'kv3',
         'yt': 'youtube', 'youtube': 'youtube',
-        // Legacy single X/IG columns → map to x1/ig1
-        'x': 'x1', 'x_twitter': 'x1', 'twitter': 'x1',
-        'instagram': 'ig1', 'ig': 'ig1',
+        'x': 'x_twitter', 'twitter': 'x_twitter',
+        'instagram': 'instagram', 'ig': 'instagram',
         'facebook': 'facebook', 'fb': 'facebook',
         'notes': 'notes',
       };
-      // Add x1..x15 and ig1..ig15 dynamically
-      for (let i = 1; i <= 15; i++) {
-        fieldByHeader[`x${i}`] = `x${i}`;
-        fieldByHeader[`x ${i}`] = `x${i}`;
-        fieldByHeader[`twitter ${i}`] = `x${i}`;
-        fieldByHeader[`ig${i}`] = `ig${i}`;
-        fieldByHeader[`ig ${i}`] = `ig${i}`;
-        fieldByHeader[`instagram ${i}`] = `ig${i}`;
-      }
       for (let C = 0; C < maxCols; C++) {
         const h = headerRow[C];
         if (!h || h === 'model id') continue; // skip Model ID column
@@ -834,12 +971,7 @@ async function parseAssetsXlsx() {
 
       // Fallback: if header detection failed, assume old format (A=model, B=website...)
       if (modelCol === -1) {
-        // Fallback column order: model, website, kv1-3, youtube, x1-15, ig1-15, facebook, notes
-        const fallbackKeys = ['model','official_website','kv1','kv2','kv3','youtube',
-          ...Array.from({length:15},(_,i)=>`x${i+1}`),
-          ...Array.from({length:15},(_,i)=>`ig${i+1}`),
-          'facebook','notes'
-        ];
+        const fallbackKeys = ['model','official_website','kv1','kv2','kv3','youtube','x_twitter','instagram','facebook','notes'];
         fallbackKeys.forEach((k, i) => { colKeyMap[i] = k; });
         modelCol = 0;
       }
@@ -859,13 +991,7 @@ async function parseAssetsXlsx() {
         rows.push(row);
       }
 
-      // All possible URL fields including multi-numbered ones
-      const allUrlFields = ['official_website','kv1','kv2','kv3','youtube','facebook',
-        ...Array.from({length:15},(_,i)=>`x${i+1}`),
-        ...Array.from({length:15},(_,i)=>`ig${i+1}`)
-      ];
-
-      const validRows = rows.filter(r => r.model && allUrlFields.some(f => r[f] && r[f].startsWith('http')));
+      const validRows = rows.filter(r => r.model && urlFields.some(f => r[f] && r[f].startsWith('http')));
       window._pendingAssets = validRows; // store globally to avoid large onclick string
 
       if (!validRows.length) {
@@ -874,6 +1000,7 @@ async function parseAssetsXlsx() {
         const colMapDump = Object.entries(colKeyMap).map(([c,f]) => `col${c}→${f}`).join(', ');
         const firstRow = rows[0];
         const firstRowDump = firstRow ? Object.entries(firstRow).map(([k,v]) => `${k}="${v}"`).join(', ') : 'no rows parsed';
+        // Also check raw cell values from row 1 (first data row)
         const rawRow1 = [];
         for (let C = 0; C <= Math.min(range.e.c, 9); C++) {
           const cell = ws[XLSX.utils.encode_cell({ r: 1, c: C })];
@@ -889,33 +1016,19 @@ async function parseAssetsXlsx() {
         return;
       }
 
-      // Count X and IG links per model for preview summary
       status.innerHTML = '';
       preview.innerHTML = `
         <div style="font-size:12px; color:var(--text-faint); margin-bottom:10px;">${validRows.length} model(s) ready to upload</div>
         <div class="table-wrap" style="max-height:300px; overflow-y:auto; margin-bottom:12px;">
           <table>
-            <thead><tr><th>Model</th><th>Site</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YT</th><th>X Posts</th><th>IG Posts</th><th>FB</th></tr></thead>
+            <thead><tr><th>Model</th><th>Site</th><th>KV1</th><th>KV2</th><th>KV3</th><th>YT</th><th>X</th><th>IG</th><th>FB</th></tr></thead>
             <tbody>
-              ${validRows.map(r => {
-                // Count how many X and IG links are present
-                const xCount = Array.from({length:15},(_,i)=>`x${i+1}`).filter(f=>r[f]&&r[f].startsWith('http')).length;
-                const igCount = Array.from({length:15},(_,i)=>`ig${i+1}`).filter(f=>r[f]&&r[f].startsWith('http')).length;
-                const checkOrDash = (field) => r[field] && r[field].startsWith('http')
-                  ? `<a href="${escapeHtml(r[field])}" target="_blank" style="color:var(--pos); font-size:11px;">✓</a>`
-                  : '<span style="color:var(--border); font-size:11px;">–</span>';
-                return `<tr>
-                  <td style="font-weight:500; font-size:11px;">${escapeHtml(r.model)}</td>
-                  <td style="text-align:center;">${checkOrDash('official_website')}</td>
-                  <td style="text-align:center;">${checkOrDash('kv1')}</td>
-                  <td style="text-align:center;">${checkOrDash('kv2')}</td>
-                  <td style="text-align:center;">${checkOrDash('kv3')}</td>
-                  <td style="text-align:center;">${checkOrDash('youtube')}</td>
-                  <td style="text-align:center; font-size:12px; font-weight:600; color:${xCount>0?'var(--pos)':'var(--border)'};">${xCount > 0 ? xCount+'×' : '–'}</td>
-                  <td style="text-align:center; font-size:12px; font-weight:600; color:${igCount>0?'var(--pos)':'var(--border)'};">${igCount > 0 ? igCount+'×' : '–'}</td>
-                  <td style="text-align:center;">${checkOrDash('facebook')}</td>
-                </tr>`;
-              }).join('')}
+              ${validRows.map(r => `<tr>
+                <td style="font-weight:500; font-size:11px;">${escapeHtml(r.model)}</td>
+                ${urlFields.map(f => `<td style="text-align:center;">${r[f] && r[f].startsWith('http')
+                  ? `<a href="${escapeHtml(r[f])}" target="_blank" style="color:var(--pos); font-size:11px;">✓</a>`
+                  : '<span style="color:var(--border); font-size:11px;">–</span>'}</td>`).join('')}
+              </tr>`).join('')}
             </tbody>
           </table>
         </div>
