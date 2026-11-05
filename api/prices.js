@@ -1,16 +1,104 @@
 // api/prices.js
-// Merged: update-price + bulk-update-ratings
+// Merged: update-price + bulk-update-ratings + ecom-scrape
 // POST /api/prices?action=update     — single price update
 // POST /api/prices?action=ratings    — bulk ratings from Excel
+// GET  /api/prices?action=scrape     — auto-fetch prices from Amazon/Flipkart (batch of 5)
+// GET  /api/prices?action=scrape&force=true — re-fetch even if already done today
 
 const { getSupabaseClient } = require('../lib/supabase');
 const { requireAdmin } = require('../lib/auth');
 
+// ---- E-com price scraping helpers ----------------------------------------
+
+const SCRAPE_BATCH_SIZE = 5; // models per run — keeps Vercel under 60s timeout
+
+function extractPriceFromHtml(html, source) {
+  // Try JSON-LD first (most reliable across both platforms)
+  const jsonLdMatches = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi) || [];
+  for (const block of jsonLdMatches) {
+    const inner = block.replace(/<script[^>]*>/, '').replace(/<\/script>/, '');
+    try {
+      const data = JSON.parse(inner);
+      const objs = Array.isArray(data) ? data : [data];
+      for (const obj of objs) {
+        if (obj['@type'] === 'Product' || obj['@type'] === 'SoftwareApplication') {
+          const offers = obj.offers || obj.Offers;
+          if (offers) {
+            const price = (Array.isArray(offers) ? offers[0] : offers).price;
+            if (price && !isNaN(parseFloat(price))) return parseFloat(price);
+          }
+        }
+      }
+    } catch (_) { /* JSON parse failed — try next */ }
+  }
+
+  if (source === 'amazon') {
+    let m = html.match(/data-asin-price="([0-9,]+(?:\.[0-9]+)?)"/);
+    if (m) return parseFloat(m[1].replace(/,/g, ''));
+    m = html.match(/"priceAmount"\s*:\s*"?([0-9,]+(?:\.[0-9]+)?)"?/);
+    if (m) return parseFloat(m[1].replace(/,/g, ''));
+    m = html.match(/<span[^>]+id="priceblock_ourprice"[^>]*>[\s\S]*?₹\s*([0-9,]+)/);
+    if (m) return parseFloat(m[1].replace(/,/g, ''));
+    const regexes = [
+      /"buyingPrice"\s*:\s*([0-9]+(?:\.[0-9]+)?)/,
+      /"price"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"/,
+      /class="a-price-whole">([0-9,]+)</,
+    ];
+    for (const re of regexes) {
+      const match = html.match(re);
+      if (match) { const p = parseFloat(match[1].replace(/,/g, '')); if (p > 1000 && p < 200000) return p; }
+    }
+  }
+
+  if (source === 'flipkart') {
+    let m = html.match(/"finalPrice"\s*:\s*([0-9]+)/);
+    if (m) return parseFloat(m[1]);
+    m = html.match(/"price"\s*:\s*([0-9]+)/);
+    if (m) { const p = parseFloat(m[1]); if (p > 1000 && p < 200000) return p; }
+    m = html.match(/class="Nx9bqj[^"]*">₹([0-9,]+)/);
+    if (m) return parseFloat(m[1].replace(/,/g, ''));
+    m = html.match(/₹\s*([0-9,]{4,8})/);
+    if (m) { const p = parseFloat(m[1].replace(/,/g, '')); if (p > 1000 && p < 200000) return p; }
+  }
+
+  return null;
+}
+
+async function fetchPriceFromUrl(url, source) {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-IN,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    'Referer': source === 'amazon' ? 'https://www.amazon.in/' : 'https://www.flipkart.com/',
+  };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const resp = await fetch(url, { headers, signal: controller.signal, redirect: 'follow' });
+    clearTimeout(timeoutId);
+    if (!resp.ok) return { price: null, error: `HTTP ${resp.status}` };
+    const html = await resp.text();
+    const price = extractPriceFromHtml(html, source);
+    return { price, error: price ? null : 'Price not found in page' };
+  } catch (e) {
+    clearTimeout(timeoutId);
+    return { price: null, error: e.name === 'AbortError' ? 'Timeout (15s)' : e.message };
+  }
+}
+
+// --------------------------------------------------------------------------
+
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // scrape action supports GET (cron) and POST (manual); everything else is POST-only
+  const action = req.query.action || 'update';
+  if (action === 'scrape') {
+    if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  } else {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  }
   if (!requireAdmin(req, res)) return;
 
-  const action = req.query.action || 'update';
   const supabase = getSupabaseClient();
   const today = new Date().toISOString().slice(0, 10);
 
@@ -154,8 +242,7 @@ module.exports = async (req, res) => {
 
     if (action === 'assets') {
       // POST /api/prices?action=assets
-      // Body: { rows: [{model, official_website, kv1, kv2, kv3, youtube,
-      //                 x1..x15, ig1..ig15, facebook, notes}] }
+      // Body: { rows: [{model, official_website, kv1, kv2, kv3, youtube, x_twitter, instagram, facebook, notes}] }
       const { rows } = req.body || {};
       if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: 'rows array required.' });
 
@@ -172,28 +259,16 @@ module.exports = async (req, res) => {
 
         const assetTypes = [
           { type: 'website',   platform: 'brand_site',  url: row.official_website, campaign_name: 'Official Website' },
-          { type: 'kv',        platform: 'print_digital', url: row.kv1, campaign_name: 'KV 1',          sequence_num: 1 },
-          { type: 'kv',        platform: 'print_digital', url: row.kv2, campaign_name: 'KV 2',          sequence_num: 2 },
-          { type: 'kv',        platform: 'print_digital', url: row.kv3, campaign_name: 'KV 3',          sequence_num: 3 },
-          { type: 'video',     platform: 'YouTube',       url: row.youtube, campaign_name: 'Official YouTube', sequence_num: 1 },
-          { type: 'post',      platform: 'Facebook',      url: row.facebook, campaign_name: 'Facebook', sequence_num: 1 },
-          // X / Twitter: up to 15 posts (x1..x15)
-          ...Array.from({length: 15}, (_, i) => ({
-            type: 'post', platform: 'X',
-            url: row[`x${i+1}`],
-            campaign_name: `X Post ${i+1}`,
-            sequence_num: i + 1,
-          })),
-          // Instagram: up to 15 posts (ig1..ig15)
-          ...Array.from({length: 15}, (_, i) => ({
-            type: 'post', platform: 'Instagram',
-            url: row[`ig${i+1}`],
-            campaign_name: `Instagram Post ${i+1}`,
-            sequence_num: i + 1,
-          })),
+          { type: 'kv',        platform: 'print_digital', url: row.kv1, campaign_name: 'KV 1' },
+          { type: 'kv',        platform: 'print_digital', url: row.kv2, campaign_name: 'KV 2' },
+          { type: 'kv',        platform: 'print_digital', url: row.kv3, campaign_name: 'KV 3' },
+          { type: 'video',     platform: 'YouTube',       url: row.youtube, campaign_name: 'Official YouTube' },
+          { type: 'post',      platform: 'X',             url: row.x_twitter, campaign_name: 'X / Twitter' },
+          { type: 'post',      platform: 'Instagram',     url: row.instagram, campaign_name: 'Instagram' },
+          { type: 'post',      platform: 'Facebook',      url: row.facebook, campaign_name: 'Facebook' },
         ].filter(a => a.url && String(a.url).trim().startsWith('http'));
 
-        if (!assetTypes.length) { errors.push(`No valid URLs for "${modelName}"`); continue; }
+        if (!assetTypes.length) { errors.push(`No valid URLs for "\${modelName}"`); continue; }
 
         const toInsert = assetTypes.map(a => ({
           model_id,
@@ -201,18 +276,13 @@ module.exports = async (req, res) => {
           platform: a.platform,
           campaign_name: a.campaign_name,
           url: String(a.url).trim(),
-          sequence_num: a.sequence_num || 1,
           notes: row.notes || null,
           tags: [],
           asset_date: null,
         }));
 
-        // Delete only the platforms that have new data — preserves platforms not in this upload
-        const platformsInUpload = [...new Set(toInsert.map(a => a.platform))];
-        for (const platform of platformsInUpload) {
-          await supabase.from('marketing_assets').delete()
-            .eq('model_id', model_id).eq('platform', platform);
-        }
+        // insert all assets in one batch — delete existing first to avoid duplicates
+        await supabase.from('marketing_assets').delete().eq('model_id', model_id);
         if (toInsert.length > 0) {
           const { error: insertErr } = await supabase.from('marketing_assets').insert(toInsert);
           if (insertErr) { errors.push(`Insert failed for "${modelName}": ${insertErr.message}`); continue; }
@@ -262,7 +332,101 @@ module.exports = async (req, res) => {
       });
     }
 
-    return res.status(400).json({ error: `Unknown action: \${action}` });
+    // ---- Auto-scrape prices from Amazon / Flipkart -------------------------
+    // GET /api/prices?action=scrape           — process oldest-updated batch
+    // GET /api/prices?action=scrape&force=true — re-fetch even if done today
+    if (action === 'scrape') {
+      const force = req.query.force === 'true' || req.body?.force === true;
+      const scrapeLog = [];
+
+      // Fetch models that have at least one e-com URL, oldest-updated first
+      const { data: models, error: fetchErr } = await supabase
+        .from('models')
+        .select('model_id, model, amazon_url, flipkart_url, current_price_inr, price_last_updated')
+        .or('amazon_url.not.is.null,flipkart_url.not.is.null')
+        .order('price_last_updated', { ascending: true, nullsFirst: true });
+
+      if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+      if (!models?.length) {
+        return res.status(200).json({ success: true, message: 'No models with e-com URLs found.', log: [] });
+      }
+
+      // Skip models already updated today unless force=true
+      const pending = force
+        ? models
+        : models.filter(m => !m.price_last_updated || m.price_last_updated < today);
+
+      if (!pending.length) {
+        return res.status(200).json({
+          success: true,
+          message: `All ${models.length} model(s) already updated today. Use force=true to re-scrape.`,
+          log: [], pending: 0, total: models.length,
+        });
+      }
+
+      const batch = pending.slice(0, SCRAPE_BATCH_SIZE);
+      scrapeLog.push(`Processing ${batch.length} of ${pending.length} pending models (${models.length} total have URLs)`);
+
+      const results = { updated: 0, failed: 0 };
+
+      for (const model of batch) {
+        const mLog = [`[${model.model}]`];
+        let newPrice = null;
+        let priceSource = null;
+
+        // Try Amazon first, then Flipkart
+        if (model.amazon_url) {
+          const { price, error } = await fetchPriceFromUrl(model.amazon_url, 'amazon');
+          if (price) { newPrice = price; priceSource = 'amazon'; mLog.push(`Amazon: ₹${price.toLocaleString('en-IN')}`); }
+          else mLog.push(`Amazon: failed (${error})`);
+        }
+        if (!newPrice && model.flipkart_url) {
+          const { price, error } = await fetchPriceFromUrl(model.flipkart_url, 'flipkart');
+          if (price) { newPrice = price; priceSource = 'flipkart'; mLog.push(`Flipkart: ₹${price.toLocaleString('en-IN')}`); }
+          else mLog.push(`Flipkart: failed (${error})`);
+        }
+
+        if (!newPrice) {
+          mLog.push('→ No price extracted — skipped');
+          scrapeLog.push(mLog.join(' '));
+          results.failed++;
+          // Mark as attempted today so we don't retry every few minutes
+          await supabase.from('models').update({ price_last_updated: today }).eq('model_id', model.model_id);
+          continue;
+        }
+
+        const changed = model.current_price_inr && Math.abs(model.current_price_inr - newPrice) > 1;
+        if (changed) mLog.push(`→ Changed: ₹${Math.round(model.current_price_inr).toLocaleString('en-IN')} → ₹${Math.round(newPrice).toLocaleString('en-IN')}`);
+        else mLog.push(`→ ₹${Math.round(newPrice).toLocaleString('en-IN')} (no change)`);
+
+        await supabase.from('models')
+          .update({ current_price_inr: newPrice, price_last_updated: today })
+          .eq('model_id', model.model_id);
+
+        // Record price history only on change (or first price)
+        if (changed || !model.current_price_inr) {
+          await supabase.from('price_history').insert({
+            model_id: model.model_id, price: newPrice, source: priceSource, noted_date: today,
+          });
+        }
+
+        scrapeLog.push(mLog.join(' '));
+        results.updated++;
+      }
+
+      const stillPending = pending.length - batch.length;
+      return res.status(200).json({
+        success: true,
+        message: `Batch done: ${results.updated} updated, ${results.failed} failed.${stillPending > 0 ? ` ${stillPending} more pending — run again.` : ' All done for today.'}`,
+        log: scrapeLog,
+        updated: results.updated,
+        failed: results.failed,
+        pending: stillPending,
+        total: models.length,
+      });
+    }
+
+    return res.status(400).json({ error: `Unknown action: ${action}` });
   } catch (e) {
     console.error('prices.js failed:', e);
     return res.status(500).json({ error: e.message });
