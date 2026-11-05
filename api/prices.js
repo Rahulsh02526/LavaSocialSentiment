@@ -418,12 +418,17 @@ module.exports = async (req, res) => {
         let imageUrl = model.image_url || null; // keep existing image if already set
 
         // Fetch Amazon price (+ image if not already set)
+        // Trusted image domains — scraper won't overwrite these
+        const TRUSTED_IMG_DOMAINS = ['m.media-amazon.com', 'rukminim', 'rukminim2', 'rukminim1'];
+        const hasGoodImage = imageUrl && TRUSTED_IMG_DOMAINS.some(d => imageUrl.includes(d));
+
+        // Fetch Amazon price (+ image if not already a trusted-domain image)
         if (model.amazon_url) {
           const { price, image, error } = await fetchPriceFromUrl(model.amazon_url, 'amazon');
           if (price) { amazonPrice = price; mLog.push(`Amazon: ₹${price.toLocaleString('en-IN')}`); }
           else mLog.push(`Amazon: failed (${error})`);
-          // Auto-set image from Amazon if model has none yet
-          if (image && !imageUrl) { imageUrl = image; mLog.push('Image: auto-fetched from Amazon'); }
+          if (image && !hasGoodImage) { imageUrl = image; mLog.push(`Image: fetched from Amazon → ${image.slice(0,60)}...`); }
+          else if (!image && !hasGoodImage) { mLog.push('Image: not found in Amazon HTML'); }
         }
 
         // Fetch Flipkart price independently (don't skip even if Amazon succeeded)
@@ -431,8 +436,9 @@ module.exports = async (req, res) => {
           const { price, image, error } = await fetchPriceFromUrl(model.flipkart_url, 'flipkart');
           if (price) { flipkartPrice = price; mLog.push(`Flipkart: ₹${price.toLocaleString('en-IN')}`); }
           else mLog.push(`Flipkart: failed (${error})`);
-          // Use Flipkart image as fallback if Amazon didn't yield one
-          if (image && !imageUrl) { imageUrl = image; mLog.push('Image: auto-fetched from Flipkart'); }
+          // Use Flipkart image only if still no good image from Amazon
+          const stillNoGoodImage = !imageUrl || !TRUSTED_IMG_DOMAINS.some(d => imageUrl.includes(d));
+          if (image && stillNoGoodImage) { imageUrl = image; mLog.push(`Image: fetched from Flipkart → ${image.slice(0,60)}...`); }
         }
 
         if (!amazonPrice && !flipkartPrice) {
@@ -457,7 +463,9 @@ module.exports = async (req, res) => {
         const updatePayload = { price_last_updated: today, current_price_inr: newPrice };
         if (amazonPrice)   updatePayload.amazon_price   = amazonPrice;
         if (flipkartPrice) updatePayload.flipkart_price = flipkartPrice;
-        if (imageUrl && !model.image_url) updatePayload.image_url = imageUrl; // only set if was null before
+        // Save image if: newly fetched, OR existing one is from an untrusted domain (e.g. GSMArena — hotlink blocked)
+        const existingIsUntrusted = model.image_url && !TRUSTED_IMG_DOMAINS.some(d => model.image_url.includes(d));
+        if (imageUrl && (!model.image_url || existingIsUntrusted)) updatePayload.image_url = imageUrl;
 
         await supabase.from('models').update(updatePayload).eq('model_id', model.model_id);
 
