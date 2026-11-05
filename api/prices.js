@@ -64,6 +64,47 @@ function extractPriceFromHtml(html, source) {
   return null;
 }
 
+// Extract product image URL from HTML (Amazon/Flipkart)
+function extractImageFromHtml(html, source) {
+  if (source === 'amazon') {
+    // Amazon: landingImageUrl or colorImages JSON blob
+    let m = html.match(/"landingImageUrl"\s*:\s*"([^"]+)"/);
+    if (m) return m[1].replace(/\\u0026/g, '&');
+
+    m = html.match(/"hiRes"\s*:\s*"(https:\/\/m\.media-amazon\.com\/images\/[^"]+)"/);
+    if (m) return m[1];
+
+    m = html.match(/"large"\s*:\s*"(https:\/\/m\.media-amazon\.com\/images\/[^"]+)"/);
+    if (m) return m[1];
+
+    // JSON-LD Product image
+    const jsonLdMatches = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi) || [];
+    for (const block of jsonLdMatches) {
+      try {
+        const data = JSON.parse(block.replace(/<script[^>]*>/, '').replace(/<\/script>/, ''));
+        const objs = Array.isArray(data) ? data : [data];
+        for (const obj of objs) {
+          if (obj['@type'] === 'Product' && obj.image) {
+            const img = Array.isArray(obj.image) ? obj.image[0] : obj.image;
+            if (typeof img === 'string' && img.startsWith('http')) return img;
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (source === 'flipkart') {
+    // Flipkart: "thumbnail":"https://..." in JSON blobs, or og:image
+    let m = html.match(/"thumbnail"\s*:\s*"(https:\/\/rukminim[^"]+)"/);
+    if (m) return m[1].replace(/\\u0026/g, '&');
+
+    m = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/);
+    if (m) return m[1];
+  }
+
+  return null;
+}
+
 async function fetchPriceFromUrl(url, source) {
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -77,13 +118,14 @@ async function fetchPriceFromUrl(url, source) {
   try {
     const resp = await fetch(url, { headers, signal: controller.signal, redirect: 'follow' });
     clearTimeout(timeoutId);
-    if (!resp.ok) return { price: null, error: `HTTP ${resp.status}` };
+    if (!resp.ok) return { price: null, image: null, error: `HTTP ${resp.status}` };
     const html = await resp.text();
     const price = extractPriceFromHtml(html, source);
-    return { price, error: price ? null : 'Price not found in page' };
+    const image = extractImageFromHtml(html, source);
+    return { price, image, error: price ? null : 'Price not found in page' };
   } catch (e) {
     clearTimeout(timeoutId);
-    return { price: null, error: e.name === 'AbortError' ? 'Timeout (15s)' : e.message };
+    return { price: null, image: null, error: e.name === 'AbortError' ? 'Timeout (15s)' : e.message };
   }
 }
 
@@ -342,7 +384,7 @@ module.exports = async (req, res) => {
       // Fetch models that have at least one e-com URL, oldest-updated first
       const { data: models, error: fetchErr } = await supabase
         .from('models')
-        .select('model_id, model, amazon_url, flipkart_url, current_price_inr, amazon_price, flipkart_price, price_last_updated')
+        .select('model_id, model, amazon_url, flipkart_url, current_price_inr, amazon_price, flipkart_price, price_last_updated, image_url')
         .or('amazon_url.not.is.null,flipkart_url.not.is.null')
         .order('price_last_updated', { ascending: true, nullsFirst: true });
 
@@ -373,19 +415,24 @@ module.exports = async (req, res) => {
         const mLog = [`[${model.model}]`];
         let amazonPrice = null;
         let flipkartPrice = null;
+        let imageUrl = model.image_url || null; // keep existing image if already set
 
-        // Fetch Amazon price independently
+        // Fetch Amazon price (+ image if not already set)
         if (model.amazon_url) {
-          const { price, error } = await fetchPriceFromUrl(model.amazon_url, 'amazon');
+          const { price, image, error } = await fetchPriceFromUrl(model.amazon_url, 'amazon');
           if (price) { amazonPrice = price; mLog.push(`Amazon: ₹${price.toLocaleString('en-IN')}`); }
           else mLog.push(`Amazon: failed (${error})`);
+          // Auto-set image from Amazon if model has none yet
+          if (image && !imageUrl) { imageUrl = image; mLog.push('Image: auto-fetched from Amazon'); }
         }
 
         // Fetch Flipkart price independently (don't skip even if Amazon succeeded)
         if (model.flipkart_url) {
-          const { price, error } = await fetchPriceFromUrl(model.flipkart_url, 'flipkart');
+          const { price, image, error } = await fetchPriceFromUrl(model.flipkart_url, 'flipkart');
           if (price) { flipkartPrice = price; mLog.push(`Flipkart: ₹${price.toLocaleString('en-IN')}`); }
           else mLog.push(`Flipkart: failed (${error})`);
+          // Use Flipkart image as fallback if Amazon didn't yield one
+          if (image && !imageUrl) { imageUrl = image; mLog.push('Image: auto-fetched from Flipkart'); }
         }
 
         if (!amazonPrice && !flipkartPrice) {
@@ -406,10 +453,11 @@ module.exports = async (req, res) => {
         if (changed) mLog.push(`→ Best price changed: ₹${Math.round(model.current_price_inr).toLocaleString('en-IN')} → ₹${Math.round(newPrice).toLocaleString('en-IN')}`);
         else mLog.push(`→ Best price: ₹${Math.round(newPrice).toLocaleString('en-IN')} (no change)`);
 
-        // Build update payload — save platform prices + best price
+        // Build update payload — save platform prices + best price + image (if newly fetched)
         const updatePayload = { price_last_updated: today, current_price_inr: newPrice };
         if (amazonPrice)   updatePayload.amazon_price   = amazonPrice;
         if (flipkartPrice) updatePayload.flipkart_price = flipkartPrice;
+        if (imageUrl && !model.image_url) updatePayload.image_url = imageUrl; // only set if was null before
 
         await supabase.from('models').update(updatePayload).eq('model_id', model.model_id);
 
