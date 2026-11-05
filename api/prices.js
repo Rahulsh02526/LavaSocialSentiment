@@ -342,7 +342,7 @@ module.exports = async (req, res) => {
       // Fetch models that have at least one e-com URL, oldest-updated first
       const { data: models, error: fetchErr } = await supabase
         .from('models')
-        .select('model_id, model, amazon_url, flipkart_url, current_price_inr, price_last_updated')
+        .select('model_id, model, amazon_url, flipkart_url, current_price_inr, amazon_price, flipkart_price, price_last_updated')
         .or('amazon_url.not.is.null,flipkart_url.not.is.null')
         .order('price_last_updated', { ascending: true, nullsFirst: true });
 
@@ -371,22 +371,24 @@ module.exports = async (req, res) => {
 
       for (const model of batch) {
         const mLog = [`[${model.model}]`];
-        let newPrice = null;
-        let priceSource = null;
+        let amazonPrice = null;
+        let flipkartPrice = null;
 
-        // Try Amazon first, then Flipkart
+        // Fetch Amazon price independently
         if (model.amazon_url) {
           const { price, error } = await fetchPriceFromUrl(model.amazon_url, 'amazon');
-          if (price) { newPrice = price; priceSource = 'amazon'; mLog.push(`Amazon: ₹${price.toLocaleString('en-IN')}`); }
+          if (price) { amazonPrice = price; mLog.push(`Amazon: ₹${price.toLocaleString('en-IN')}`); }
           else mLog.push(`Amazon: failed (${error})`);
         }
-        if (!newPrice && model.flipkart_url) {
+
+        // Fetch Flipkart price independently (don't skip even if Amazon succeeded)
+        if (model.flipkart_url) {
           const { price, error } = await fetchPriceFromUrl(model.flipkart_url, 'flipkart');
-          if (price) { newPrice = price; priceSource = 'flipkart'; mLog.push(`Flipkart: ₹${price.toLocaleString('en-IN')}`); }
+          if (price) { flipkartPrice = price; mLog.push(`Flipkart: ₹${price.toLocaleString('en-IN')}`); }
           else mLog.push(`Flipkart: failed (${error})`);
         }
 
-        if (!newPrice) {
+        if (!amazonPrice && !flipkartPrice) {
           mLog.push('→ No price extracted — skipped');
           scrapeLog.push(mLog.join(' '));
           results.failed++;
@@ -395,16 +397,27 @@ module.exports = async (req, res) => {
           continue;
         }
 
-        const changed = model.current_price_inr && Math.abs(model.current_price_inr - newPrice) > 1;
-        if (changed) mLog.push(`→ Changed: ₹${Math.round(model.current_price_inr).toLocaleString('en-IN')} → ₹${Math.round(newPrice).toLocaleString('en-IN')}`);
-        else mLog.push(`→ ₹${Math.round(newPrice).toLocaleString('en-IN')} (no change)`);
+        // current_price_inr = lowest available price (best deal for consumer)
+        const newPrice = amazonPrice && flipkartPrice
+          ? Math.min(amazonPrice, flipkartPrice)
+          : (amazonPrice || flipkartPrice);
 
-        await supabase.from('models')
-          .update({ current_price_inr: newPrice, price_last_updated: today })
-          .eq('model_id', model.model_id);
+        const changed = model.current_price_inr && Math.abs(model.current_price_inr - newPrice) > 1;
+        if (changed) mLog.push(`→ Best price changed: ₹${Math.round(model.current_price_inr).toLocaleString('en-IN')} → ₹${Math.round(newPrice).toLocaleString('en-IN')}`);
+        else mLog.push(`→ Best price: ₹${Math.round(newPrice).toLocaleString('en-IN')} (no change)`);
+
+        // Build update payload — save platform prices + best price
+        const updatePayload = { price_last_updated: today, current_price_inr: newPrice };
+        if (amazonPrice)   updatePayload.amazon_price   = amazonPrice;
+        if (flipkartPrice) updatePayload.flipkart_price = flipkartPrice;
+
+        await supabase.from('models').update(updatePayload).eq('model_id', model.model_id);
 
         // Record price history only on change (or first price)
         if (changed || !model.current_price_inr) {
+          const priceSource = amazonPrice && flipkartPrice
+            ? (amazonPrice <= flipkartPrice ? 'amazon' : 'flipkart')
+            : (amazonPrice ? 'amazon' : 'flipkart');
           await supabase.from('price_history').insert({
             model_id: model.model_id, price: newPrice, source: priceSource, noted_date: today,
           });
