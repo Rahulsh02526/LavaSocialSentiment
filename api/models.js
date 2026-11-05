@@ -35,9 +35,6 @@ async function insertModel(supabase, row, modelId) {
     sentiment_frozen_at: addMonths(row.launch_date, 6),
     price_frozen_at:     addMonths(row.launch_date, 12),
     rank_original: `#${modelId}`,
-    // E-com URLs for daily price scraper (optional at add time)
-    amazon_url:   row.amazon_url   || null,
-    flipkart_url: row.flipkart_url || null,
   });
   if (modelErr) throw new Error(`Model insert failed: ${modelErr.message}`);
 
@@ -123,43 +120,74 @@ module.exports = async (req, res) => {
       });
     }
 
-    // ---- Bulk update e-com URLs only (no model insert) ----
+    // ---- Bulk update e-com URLs (amazon_url + flipkart_url) ----
+    // POST /api/models?action=update-ecom-urls
+    // Body: { rows: [{ model_name, amazon_url, flipkart_url }, ...] }
+    // Also auto-sets amazon_available / flipkart_available based on whether URL is present.
     if (action === 'update-ecom-urls') {
-      // POST /api/models?action=update-ecom-urls
-      // Body: { rows: [{model_name, amazon_url, flipkart_url}] }
-      // Matches by model name (case-insensitive trim), updates only the URL columns.
       const { rows } = req.body || {};
       if (!Array.isArray(rows) || !rows.length) {
         return res.status(400).json({ error: 'rows array required.' });
       }
 
-      // Fetch all models for name→id lookup
-      const { data: allModels } = await supabase.from('models').select('model_id, model');
+      // Fetch all models for name → id lookup (case-insensitive)
+      const { data: allModels, error: fetchErr } = await supabase
+        .from('models').select('model_id, model');
+      if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+
+      // Build lookup map: lowercase model name → model_id
       const modelMap = {};
-      allModels.forEach(m => { modelMap[m.model.trim().toLowerCase()] = m.model_id; });
+      for (const m of allModels) {
+        modelMap[m.model.toLowerCase().trim()] = m.model_id;
+      }
 
-      const results = [], errors = [];
+      const updated = [], errors = [];
       for (const row of rows) {
-        const key = (row.model_name || '').trim().toLowerCase();
-        const model_id = modelMap[key];
-        if (!model_id) { errors.push(`"${row.model_name}" not found`); continue; }
+        const name = String(row.model_name || '').trim();
+        const modelId = modelMap[name.toLowerCase()];
+        if (!modelId) {
+          errors.push(`Not found: "${name}"`);
+          continue;
+        }
 
-        // Build update object — only set fields that are non-empty in this row
-        const update = {};
-        if (row.amazon_url   && row.amazon_url.startsWith('http'))   update.amazon_url   = row.amazon_url.trim();
-        if (row.flipkart_url && row.flipkart_url.startsWith('http')) update.flipkart_url = row.flipkart_url.trim();
-        if (!Object.keys(update).length) { errors.push(`No valid URLs for "${row.model_name}"`); continue; }
+        // Build update payload
+        // Rule: available = 'Yes' ONLY if URL is a non-empty string starting with http
+        // available = 'No' if URL is null, empty, or not a valid URL
+        const updatePayload = {};
+        const aUrl = (row.amazon_url != null) ? String(row.amazon_url).trim() : null;
+        const fUrl = (row.flipkart_url != null) ? String(row.flipkart_url).trim() : null;
 
-        const { error: updErr } = await supabase.from('models').update(update).eq('model_id', model_id);
-        if (updErr) { errors.push(`Update failed for "${row.model_name}": ${updErr.message}`); continue; }
-        results.push(row.model_name);
+        // Amazon — always set both url + available together so they stay in sync
+        if (aUrl !== null) {
+          const validA = aUrl.startsWith('http');
+          updatePayload.amazon_url       = validA ? aUrl : null;
+          updatePayload.amazon_available = validA ? 'Yes' : 'No';
+        }
+
+        // Flipkart — same logic
+        if (fUrl !== null) {
+          const validF = fUrl.startsWith('http');
+          updatePayload.flipkart_url       = validF ? fUrl : null;
+          updatePayload.flipkart_available = validF ? 'Yes' : 'No';
+        }
+
+        if (!Object.keys(updatePayload).length) continue; // nothing to update
+
+        const { error: updErr } = await supabase
+          .from('models').update(updatePayload).eq('model_id', modelId);
+
+        if (updErr) {
+          errors.push(`Error updating "${name}": ${updErr.message}`);
+        } else {
+          updated.push(name);
+        }
       }
 
       return res.status(200).json({
         success: true,
-        updated: results.length,
+        updated: updated.length,
         errors,
-        message: `${results.length} model(s) updated.${errors.length ? ` ${errors.length} skipped.` : ''}`,
+        message: `${updated.length} model(s) updated.${errors.length ? ` ${errors.length} not found/failed.` : ''}`,
       });
     }
 
