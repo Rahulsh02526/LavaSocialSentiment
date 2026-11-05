@@ -69,7 +69,8 @@ function renderEcomView() {
             <tr>
               <th onclick="sortEcom('model')" style="cursor:pointer;">Model</th>
               <th onclick="sortEcom('launch_date')" style="cursor:pointer;">Launch Date</th>
-              <th onclick="sortEcom('launch_price_inr')" style="cursor:pointer;">Launch Price</th>
+              <th onclick="sortEcom('launch_price_inr')" style="cursor:pointer;">Launch ₹</th>
+              <th onclick="sortEcom('current_price_inr')" style="cursor:pointer;">Current ₹</th>
               <th>Status</th>
               <th>Amazon</th>
               <th>Flipkart</th>
@@ -116,6 +117,15 @@ function renderEcomTable() {
       <td class="model-name"><a href="#" onclick="event.preventDefault(); goToModel(${p.model_id})">${p.model}</a></td>
       <td>${p.launch_date || '–'}</td>
       <td class="num">${p.launch_price_inr ? '₹'+Math.round(p.launch_price_inr).toLocaleString('en-IN') : '–'}</td>
+      <td class="num">${(() => {
+        if (!p.current_price_inr) return '–';
+        const curr = Math.round(p.current_price_inr);
+        const launch = Math.round(p.launch_price_inr || 0);
+        const diff = curr - launch;
+        const diffStr = diff !== 0 ? `<br><span style="font-size:10px; color:${diff > 0 ? 'var(--neg)' : 'var(--pos)'};">${diff > 0 ? '+' : ''}₹${Math.abs(diff).toLocaleString('en-IN')}</span>` : '';
+        const dateStr = p.price_last_updated ? `<br><span style="font-size:10px; color:var(--text-faint);">as of ${p.price_last_updated}</span>` : '';
+        return '₹'+curr.toLocaleString('en-IN') + diffStr + dateStr;
+      })()}</td>
       <td>${lifecycleBadge(status)}</td>
       <td>${availBadge(p.amazon_available)}</td>
       <td>${availBadge(p.flipkart_available)}</td>
