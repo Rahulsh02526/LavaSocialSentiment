@@ -4,26 +4,7 @@
 
 let ecomSortKey = 'launch_date';
 let ecomSortDir = 'desc';
-
-// ---- helper: format a date string as "4 Nov 2026" ----
-function fmtDate(d) {
-  if (!d) return null;
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const dt = new Date(d);
-  if (isNaN(dt)) return d;
-  return `${dt.getDate()} ${months[dt.getMonth()]} ${dt.getFullYear()}`;
-}
-
-// ---- helper: format price with optional "as of DD MMM YYYY" timestamp ----
-function priceWithDate(price, dateStr, source) {
-  if (!price) return '–';
-  const formatted = '₹' + Math.round(price).toLocaleString('en-IN');
-  const dateLabel = dateStr ? `<div style="font-size:10px; color:var(--text-faint);">as of ${fmtDate(dateStr)}</div>` : '';
-  // source badge: amazon = orange, flipkart = blue, manual = gray
-  const srcColor = source === 'amazon' ? '#FF9900' : source === 'flipkart' ? '#2874F0' : 'var(--text-faint)';
-  const srcLabel = source ? `<div style="font-size:10px; color:${srcColor}; font-weight:600;">${source === 'amazon' ? '● Amazon' : source === 'flipkart' ? '● Flipkart' : '● Manual'}</div>` : '';
-  return `<div style="font-weight:600;">${formatted}</div>${srcLabel}${dateLabel}`;
-}
+let ecomFetchBusy = false;
 
 function renderEcomView() {
   const el = document.getElementById('view-ecom');
@@ -31,36 +12,22 @@ function renderEcomView() {
     <div class="section-head">
       <div>
         <div class="section-title">E-commerce Data</div>
-        <div class="section-sub">Amazon + Flipkart — prices and reviews auto-updated daily by scraper</div>
+        <div class="section-sub">Amazon + Flipkart — prices auto-fetched daily, comments manually captured</div>
       </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        ${isAdminLoggedIn() ? `<button class="ghost small" onclick="toggleBulkUrlPanel()">⚙ Update E-com URLs</button>` : ''}
-        <button class="primary small" onclick="${isAdminLoggedIn() ? 'openAddCommentsPanel()' : 'promptAdminLoginRedirect()'}">${isAdminLoggedIn() ? '+ Add New Comments' : 'Admin Login Required'}</button>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        ${isAdminLoggedIn() ? `
+          <button id="ecomFetchBtn" class="small" onclick="triggerEcomFetch(false)" title="Fetch latest prices from Amazon / Flipkart">🔄 Run Price Fetch Now</button>
+          <button id="ecomForceFetchBtn" class="small" onclick="triggerEcomFetch(true)" title="Force re-fetch even if already done today" style="color:var(--text-dim);">⚡ Force Fetch</button>
+          <button id="ecomFetchStopBtn" style="display:none;" class="small danger" onclick="stopEcomFetch()">■ Stop</button>
+        ` : ''}
+        <button class="primary small" onclick="${isAdminLoggedIn() ? 'openAddCommentsPanel()' : 'promptAdminLoginRedirect()'}">${isAdminLoggedIn() ? '+ Add Comments' : 'Admin Login Required'}</button>
       </div>
     </div>
 
-    <!-- Bulk URL Update panel (admin only) -->
-    ${isAdminLoggedIn() ? `
-    <div id="bulkUrlPanel" style="display:none;" class="panel" style="margin-bottom:14px;">
-      <div class="panel-title">Update E-com URLs in Bulk</div>
-      <p style="font-size:12px; color:var(--text-faint); margin-bottom:12px;">
-        Upload a CSV or Excel with columns: <b>model_name, amazon_url, flipkart_url</b><br>
-        Model name must exactly match the platform. Leave a URL blank to keep existing.
-      </p>
-      <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
-        <div class="field" style="flex:1; min-width:200px;">
-          <label>Upload CSV / XLSX</label>
-          <input type="file" id="urlBulkFile" accept=".csv,.xlsx,.xls" onchange="previewUrlBulk(this)">
-        </div>
-        <button class="ghost small" onclick="downloadUrlTemplate()">↓ Download Template</button>
-      </div>
-      <div id="urlBulkPreview" style="margin-top:12px;"></div>
-      <div id="urlBulkStatus" style="margin-top:8px;"></div>
-    </div>` : ''}
+    <div id="ecomFetchResultBox" style="margin-bottom:12px;"></div>
 
     <div class="notice">
-      Prices are auto-scraped daily from Amazon &amp; Flipkart (7 AM IST). "as of" date shows when the price was last captured.
-      Add Amazon/Flipkart product URLs for a model using the <b>⚙ Update E-com URLs</b> button above.
+      Prices are fetched daily from Amazon/Flipkart (models with URLs set). Click <b>Run Price Fetch Now</b> to trigger immediately. Comments older than each model's 6-month window are kept but excluded from aggregate scoring (see the <b>Window</b> column).
     </div>
 
     <div id="addCommentsPanel" style="display:none;" class="panel">
@@ -102,12 +69,11 @@ function renderEcomView() {
             <tr>
               <th onclick="sortEcom('model')" style="cursor:pointer;">Model</th>
               <th onclick="sortEcom('launch_date')" style="cursor:pointer;">Launch Date</th>
-              <th onclick="sortEcom('launch_price_inr')" style="cursor:pointer;">Launch ₹</th>
-              <th onclick="sortEcom('current_price_inr')" style="cursor:pointer;">Current ₹</th>
+              <th onclick="sortEcom('launch_price_inr')" style="cursor:pointer;">Launch Price</th>
               <th>Status</th>
               <th>Amazon</th>
               <th>Flipkart</th>
-              <th onclick="sortEcom('num_comments')" style="cursor:pointer;">Reviews</th>
+              <th onclick="sortEcom('num_comments')" style="cursor:pointer;">Comments</th>
               <th>Tagged</th>
             </tr>
           </thead>
@@ -142,41 +108,14 @@ function renderEcomTable() {
   }
 
   tbody.innerHTML = rows.map(p => {
-    // Count from both manual comments and auto-scraped reviews
     const commentCount = STATE.comments.filter(c => c.model_id === p.model_id).length;
     const taggedCount = STATE.comments.filter(c => c.model_id === p.model_id && c.tag).length;
     const status = getLifecycleStatus(p);
-
-    // Current price — prefer scraper data, fall back to manual current_price_inr
-    const currentP = p.current_price_inr || p.launch_price_inr;
-    // Source of current price: 'amazon' | 'flipkart' | null (manual)
-    const priceSource = p.amazon_price && p.flipkart_price
-      ? (p.amazon_price <= p.flipkart_price ? 'amazon' : 'flipkart')
-      : p.amazon_price ? 'amazon'
-      : p.flipkart_price ? 'flipkart'
-      : null;
-
-    // Price delta vs launch
-    const launchP = p.launch_price_inr;
-    const priceDiff = (launchP && currentP && currentP !== launchP) ? currentP - launchP : null;
-    const diffColor = priceDiff === null ? '' : priceDiff > 0 ? 'var(--neg)' : 'var(--pos)';
-    const diffStr = priceDiff !== null
-      ? `<div style="font-size:10px; color:${diffColor};">${priceDiff > 0 ? '+' : ''}₹${Math.abs(priceDiff).toLocaleString('en-IN')}</div>`
-      : '';
-
     return `
     <tr>
-      <td class="model-name">
-        <a href="#" onclick="event.preventDefault(); goToModel(${p.model_id})">${p.model}</a>
-        ${!p.amazon_url && !p.flipkart_url && isAdminLoggedIn()
-          ? `<div style="font-size:9px; color:var(--neg); margin-top:2px;">No e-com URLs set</div>` : ''}
-      </td>
-      <td style="font-size:12px;">${p.launch_date || '–'}</td>
-      <td class="num">${launchP ? '₹'+Math.round(launchP).toLocaleString('en-IN') : '–'}</td>
-      <td class="num" style="line-height:1.4;">
-        ${priceWithDate(currentP, p.price_last_updated, priceSource)}
-        ${diffStr}
-      </td>
+      <td class="model-name"><a href="#" onclick="event.preventDefault(); goToModel(${p.model_id})">${p.model}</a></td>
+      <td>${p.launch_date || '–'}</td>
+      <td class="num">${p.launch_price_inr ? '₹'+Math.round(p.launch_price_inr).toLocaleString('en-IN') : '–'}</td>
       <td>${lifecycleBadge(status)}</td>
       <td>${availBadge(p.amazon_available)}</td>
       <td>${availBadge(p.flipkart_available)}</td>
@@ -201,148 +140,83 @@ function sortEcom(key) {
 function openAddCommentsPanel() { document.getElementById('addCommentsPanel').style.display = 'block'; }
 function closeAddCommentsPanel() { document.getElementById('addCommentsPanel').style.display = 'none'; }
 
-// ============================================================
-// BULK E-COM URL UPDATE
-// ============================================================
+// ---- E-com Price Fetch (mirrors YT triggerManualFetch pattern) ----------
 
-function toggleBulkUrlPanel() {
-  const p = document.getElementById('bulkUrlPanel');
-  if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
-}
+async function triggerEcomFetch(force = false) {
+  if (!isAdminLoggedIn()) { promptAdminLoginRedirect(); return; }
+  if (ecomFetchBusy) return;
 
-// Download a CSV template with all current model names pre-filled
-function downloadUrlTemplate() {
-  const header = 'model_name,amazon_url,flipkart_url';
-  const rows = STATE.phones.map(p => `"${p.model.replace(/"/g,'""')}",,`);
-  const csv = [header, ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'SIP_EcomURLs_Template.csv';
-  a.click();
-}
+  ecomFetchBusy = true;
+  const btn      = document.getElementById('ecomFetchBtn');
+  const forceBtn = document.getElementById('ecomForceFetchBtn');
+  const stopBtn  = document.getElementById('ecomFetchStopBtn');
+  const resultBox = document.getElementById('ecomFetchResultBox');
 
-// Parse uploaded file and show preview table before submitting
-async function previewUrlBulk(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const preview = document.getElementById('urlBulkPreview');
-  const status  = document.getElementById('urlBulkStatus');
-  preview.innerHTML = '<div class="notice"><span class="spinner"></span> Reading file…</div>';
-  status.innerHTML  = '';
+  if (btn)      { btn.disabled = true;      btn.innerHTML = '<span class="spinner"></span> Fetching...'; }
+  if (forceBtn) { forceBtn.disabled = true; }
+  if (stopBtn)  { stopBtn.style.display = 'inline-block'; }
 
-  let rows = [];
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), 65000); // 65s — just over Vercel's 60s limit
 
   try {
-    if (file.name.endsWith('.csv')) {
-      // Parse CSV
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z_]/g,''));
-      const nameIdx = headers.indexOf('model_name');
-      const amzIdx  = headers.indexOf('amazon_url');
-      const fkIdx   = headers.indexOf('flipkart_url');
-      if (nameIdx === -1) { preview.innerHTML = '<div class="notice danger">Column "model_name" not found in CSV.</div>'; return; }
-      for (let i = 1; i < lines.length; i++) {
-        // Simple CSV parse (handles quoted commas)
-        const cols = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) || [];
-        const clean = (s) => (s || '').replace(/^"|"$/g,'').trim();
-        const model_name  = clean(cols[nameIdx]);
-        const amazon_url  = clean(cols[amzIdx]);
-        const flipkart_url = clean(cols[fkIdx]);
-        if (model_name) rows.push({ model_name, amazon_url: amazon_url || null, flipkart_url: flipkart_url || null });
-      }
-    } else {
-      // Parse XLSX using the SheetJS already loaded on the page
-      if (typeof XLSX === 'undefined') { preview.innerHTML = '<div class="notice danger">SheetJS not loaded — use CSV instead.</div>'; return; }
-      const buf  = await file.arrayBuffer();
-      const wb   = XLSX.read(buf, { type: 'array' });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      rows = data.map(r => {
-        // Normalize header names
-        const get = (...keys) => {
-          for (const k of keys) {
-            const found = Object.keys(r).find(h => h.trim().toLowerCase() === k);
-            if (found && r[found]) return String(r[found]).trim();
-          }
-          return null;
-        };
-        return {
-          model_name:   get('model_name','model'),
-          amazon_url:   get('amazon_url','amazon') || null,
-          flipkart_url: get('flipkart_url','flipkart') || null,
-        };
-      }).filter(r => r.model_name);
-    }
-  } catch (e) {
-    preview.innerHTML = `<div class="notice danger">Parse error: ${e.message}</div>`;
-    return;
-  }
-
-  if (!rows.length) {
-    preview.innerHTML = '<div class="notice danger">No data rows found. Check column names: model_name, amazon_url, flipkart_url</div>';
-    return;
-  }
-
-  // Match each row to a model in STATE.phones (fuzzy: trim + lowercase)
-  const modelMap = {};
-  STATE.phones.forEach(p => { modelMap[p.model.trim().toLowerCase()] = p; });
-
-  const matched   = rows.filter(r => modelMap[r.model_name.trim().toLowerCase()]);
-  const unmatched = rows.filter(r => !modelMap[r.model_name.trim().toLowerCase()]);
-
-  window._pendingUrlRows = matched;
-
-  preview.innerHTML = `
-    <div style="font-size:12px; color:var(--text-faint); margin-bottom:8px;">
-      ${matched.length} model(s) matched · ${unmatched.length} unmatched
-      ${unmatched.length ? `<div style="color:var(--neg); font-size:11px; margin-top:4px;">Unmatched: ${unmatched.map(r=>escapeHtml(r.model_name)).join(', ')}</div>` : ''}
-    </div>
-    <div class="table-wrap" style="max-height:220px; overflow-y:auto; margin-bottom:10px;">
-      <table>
-        <thead><tr><th>Model</th><th>Amazon URL</th><th>Flipkart URL</th></tr></thead>
-        <tbody>
-          ${matched.map(r => `<tr>
-            <td style="font-size:11px; font-weight:500;">${escapeHtml(r.model_name)}</td>
-            <td style="font-size:10px; color:${r.amazon_url ? '#FF9900' : 'var(--border)'};">${r.amazon_url ? '✓ set' : '–'}</td>
-            <td style="font-size:10px; color:${r.flipkart_url ? '#2874F0' : 'var(--border)'};">${r.flipkart_url ? '✓ set' : '–'}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-    ${matched.length ? `
-    <div style="display:flex; gap:10px;">
-      <button class="primary" onclick="submitUrlBulk()">✓ Save URLs for ${matched.length} Model(s)</button>
-      <button class="ghost" onclick="document.getElementById('urlBulkPreview').innerHTML=''; window._pendingUrlRows=null;">Cancel</button>
-    </div>` : ''}
-  `;
-}
-
-// Submit the matched rows to the API
-async function submitUrlBulk() {
-  const rows = window._pendingUrlRows;
-  if (!rows || !rows.length) return;
-  const status = document.getElementById('urlBulkStatus');
-  status.innerHTML = '<div class="notice"><span class="spinner"></span> Saving…</div>';
-
-  try {
-    const result = await apiPost('/api/models?action=update-ecom-urls', { rows });
-    // Refresh STATE.phones to show updated URLs
-    rows.forEach(r => {
-      const phone = STATE.phones.find(p => p.model.trim().toLowerCase() === r.model_name.trim().toLowerCase());
-      if (phone) {
-        if (r.amazon_url)   phone.amazon_url   = r.amazon_url;
-        if (r.flipkart_url) phone.flipkart_url = r.flipkart_url;
-      }
+    const url = '/api/cron-ecom-scrape' + (force ? '?force=true' : '');
+    const resp = await fetch(url, {
+      headers: { 'x-auth-token': AUTH.adminToken || '' },
+      signal: controller.signal,
     });
-    window._pendingUrlRows = null;
-    document.getElementById('urlBulkPreview').innerHTML = '';
-    status.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${result.message}</div>`;
-    renderEcomTable();  // refresh table to remove "No e-com URLs" warnings
+    clearTimeout(timeoutId);
+    const data = await resp.json();
+
+    // Append result log (prepend so latest is on top)
+    const entry = document.createElement('div');
+    entry.style.cssText = 'margin-bottom:8px;';
+    entry.innerHTML = `
+      <div class="notice" style="margin-bottom:4px; border-color:${data.pending > 0 ? 'var(--accent)' : 'var(--pos)'};">
+        ${escapeHtml(data.message || 'Done.')}
+        ${data.pending > 0 ? `<button class="small" style="margin-left:10px; padding:2px 8px;" onclick="triggerEcomFetch(false)">Run Next Batch</button>` : ''}
+      </div>
+      ${data.log?.length ? `<div style="font-size:11px; color:var(--text-dim); font-family:var(--mono); background:var(--panel-2); padding:8px 10px; border-radius:6px; line-height:1.7;">${data.log.map(l => escapeHtml(l)).join('<br>')}</div>` : ''}
+    `;
+    resultBox.prepend(entry);
+
+    // Refresh prices in STATE so table updates immediately
+    if (data.updated > 0) {
+      try {
+        const fresh = await apiGet('/api/data');
+        STATE.phones = fresh.phones;
+        STATE.comments = fresh.comments;
+        renderTopbar();
+        renderEcomTable();
+      } catch (_) { /* refresh failed — not critical */ }
+    }
+
   } catch (e) {
-    status.innerHTML = `<div class="notice danger">Error: ${e.message}</div>`;
+    clearTimeout(timeoutId);
+    const entry = document.createElement('div');
+    entry.innerHTML = `<div class="notice danger">${e.name === 'AbortError' ? '⏱ Timed out — server may still be processing in the background.' : '✗ Failed: ' + escapeHtml(e.message)}</div>`;
+    resultBox.prepend(entry);
   }
+
+  ecomFetchBusy = false;
+  if (btn)      { btn.disabled = false;      btn.innerHTML = '🔄 Run Price Fetch Now'; }
+  if (forceBtn) { forceBtn.disabled = false; }
+  if (stopBtn)  { stopBtn.style.display = 'none'; }
+}
+
+function stopEcomFetch() {
+  // Marks busy = false so next run is accepted; can't cancel in-flight HTTP
+  ecomFetchBusy = false;
+  const stopBtn  = document.getElementById('ecomFetchStopBtn');
+  const btn      = document.getElementById('ecomFetchBtn');
+  const forceBtn = document.getElementById('ecomForceFetchBtn');
+  const resultBox = document.getElementById('ecomFetchResultBox');
+  if (stopBtn)  stopBtn.style.display = 'none';
+  if (btn)      { btn.disabled = false; btn.innerHTML = '🔄 Run Price Fetch Now'; }
+  if (forceBtn) forceBtn.disabled = false;
+  const note = document.createElement('div');
+  note.innerHTML = `<div class="notice warn" style="margin-bottom:8px;">Stopped — current batch will still complete on the server.</div>`;
+  resultBox.prepend(note);
 }
 
 async function submitNewComments() {
