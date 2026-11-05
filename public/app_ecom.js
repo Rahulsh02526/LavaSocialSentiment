@@ -5,6 +5,9 @@
 let ecomSortKey = 'launch_date';
 let ecomSortDir = 'desc';
 let ecomFetchBusy = false;
+let ecomAutoRunning = false;
+let ecomRunCount = 0;
+const ECOM_AUTO_MAX = 25; // safety cap — max 25 auto-runs per session (~125 models)
 
 function renderEcomView() {
   const el = document.getElementById('view-ecom');
@@ -16,8 +19,8 @@ function renderEcomView() {
       </div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         ${isAdminLoggedIn() ? `
-          <button id="ecomFetchBtn" class="small" onclick="triggerEcomFetch(false)" title="Fetch latest prices from Amazon / Flipkart">🔄 Run Price Fetch Now</button>
-          <button id="ecomForceFetchBtn" class="small" onclick="triggerEcomFetch(true)" title="Force re-fetch even if already done today" style="color:var(--text-dim);">⚡ Force Fetch</button>
+          <button id="ecomFetchBtn" class="small" onclick="startEcomAutoFetch(false)" title="Fetch latest prices — auto-continues until all models done">🔄 Run Price Fetch Now</button>
+          <button id="ecomForceFetchBtn" class="small" onclick="startEcomAutoFetch(true)" title="Force re-fetch all models even if done today" style="color:var(--text-dim);">⚡ Force Fetch All</button>
           <button id="ecomFetchStopBtn" style="display:none;" class="small danger" onclick="stopEcomFetch()">■ Stop</button>
         ` : ''}
         <button class="primary small" onclick="${isAdminLoggedIn() ? 'openAddCommentsPanel()' : 'promptAdminLoginRedirect()'}">${isAdminLoggedIn() ? '+ Add Comments' : 'Admin Login Required'}</button>
@@ -70,7 +73,8 @@ function renderEcomView() {
               <th onclick="sortEcom('model')" style="cursor:pointer;">Model</th>
               <th onclick="sortEcom('launch_date')" style="cursor:pointer;">Launch Date</th>
               <th onclick="sortEcom('launch_price_inr')" style="cursor:pointer;">Launch ₹</th>
-              <th onclick="sortEcom('current_price_inr')" style="cursor:pointer;">Current ₹</th>
+              <th onclick="sortEcom('amazon_price')" style="cursor:pointer;" title="Latest Amazon price">Amazon ₹</th>
+              <th onclick="sortEcom('flipkart_price')" style="cursor:pointer;" title="Latest Flipkart price">Flipkart ₹</th>
               <th>Status</th>
               <th>Amazon</th>
               <th>Flipkart</th>
@@ -118,13 +122,22 @@ function renderEcomTable() {
       <td>${p.launch_date || '–'}</td>
       <td class="num">${p.launch_price_inr ? '₹'+Math.round(p.launch_price_inr).toLocaleString('en-IN') : '–'}</td>
       <td class="num">${(() => {
-        if (!p.current_price_inr) return '–';
-        const curr = Math.round(p.current_price_inr);
+        // Amazon price cell — show price + diff vs launch
+        if (!p.amazon_price) return '<span style="color:var(--text-faint);">–</span>';
+        const curr = Math.round(p.amazon_price);
         const launch = Math.round(p.launch_price_inr || 0);
         const diff = curr - launch;
-        const diffStr = diff !== 0 ? `<br><span style="font-size:10px; color:${diff > 0 ? 'var(--neg)' : 'var(--pos)'};">${diff > 0 ? '+' : ''}₹${Math.abs(diff).toLocaleString('en-IN')}</span>` : '';
-        const dateStr = p.price_last_updated ? `<br><span style="font-size:10px; color:var(--text-faint);">as of ${p.price_last_updated}</span>` : '';
-        return '₹'+curr.toLocaleString('en-IN') + diffStr + dateStr;
+        const diffStr = launch && diff !== 0 ? `<br><span style="font-size:10px; color:${diff > 0 ? 'var(--neg)' : 'var(--pos)'};">${diff > 0 ? '+' : '–'}₹${Math.abs(diff).toLocaleString('en-IN')}</span>` : '';
+        return '₹'+curr.toLocaleString('en-IN') + diffStr;
+      })()}</td>
+      <td class="num">${(() => {
+        // Flipkart price cell — show price + diff vs launch
+        if (!p.flipkart_price) return '<span style="color:var(--text-faint);">–</span>';
+        const curr = Math.round(p.flipkart_price);
+        const launch = Math.round(p.launch_price_inr || 0);
+        const diff = curr - launch;
+        const diffStr = launch && diff !== 0 ? `<br><span style="font-size:10px; color:${diff > 0 ? 'var(--neg)' : 'var(--pos)'};">${diff > 0 ? '+' : '–'}₹${Math.abs(diff).toLocaleString('en-IN')}</span>` : '';
+        return '₹'+curr.toLocaleString('en-IN') + diffStr;
       })()}</td>
       <td>${lifecycleBadge(status)}</td>
       <td>${availBadge(p.amazon_available)}</td>
@@ -152,7 +165,7 @@ function closeAddCommentsPanel() { document.getElementById('addCommentsPanel').s
 
 // ---- E-com Price Fetch (mirrors YT triggerManualFetch pattern) ----------
 
-async function triggerEcomFetch(force = false) {
+async function triggerEcomFetch(force = false, autoRun = false) {
   if (!isAdminLoggedIn()) { promptAdminLoginRedirect(); return; }
   if (ecomFetchBusy) return;
 
@@ -162,7 +175,10 @@ async function triggerEcomFetch(force = false) {
   const stopBtn  = document.getElementById('ecomFetchStopBtn');
   const resultBox = document.getElementById('ecomFetchResultBox');
 
-  if (btn)      { btn.disabled = true;      btn.innerHTML = '<span class="spinner"></span> Fetching...'; }
+  // On first run: clear log, reset counter
+  if (!autoRun) { resultBox.innerHTML = ''; ecomRunCount = 0; }
+
+  if (btn)      { btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Fetching... ${ecomRunCount > 0 ? '('+ecomRunCount+' done)' : ''}`; }
   if (forceBtn) { forceBtn.disabled = true; }
   if (stopBtn)  { stopBtn.style.display = 'inline-block'; }
 
@@ -177,14 +193,14 @@ async function triggerEcomFetch(force = false) {
     });
     clearTimeout(timeoutId);
     const data = await resp.json();
+    ecomRunCount++;
 
     // Append result log (prepend so latest is on top)
     const entry = document.createElement('div');
-    entry.style.cssText = 'margin-bottom:8px;';
+    entry.style.cssText = 'margin-bottom:6px;';
     entry.innerHTML = `
       <div class="notice" style="margin-bottom:4px; border-color:${data.pending > 0 ? 'var(--accent)' : 'var(--pos)'};">
         ${escapeHtml(data.message || 'Done.')}
-        ${data.pending > 0 ? `<button class="small" style="margin-left:10px; padding:2px 8px;" onclick="triggerEcomFetch(false)">Run Next Batch</button>` : ''}
       </div>
       ${data.log?.length ? `<div style="font-size:11px; color:var(--text-dim); font-family:var(--mono); background:var(--panel-2); padding:8px 10px; border-radius:6px; line-height:1.7;">${data.log.map(l => escapeHtml(l)).join('<br>')}</div>` : ''}
     `;
@@ -201,21 +217,48 @@ async function triggerEcomFetch(force = false) {
       } catch (_) { /* refresh failed — not critical */ }
     }
 
+    // Auto-continue if more pending and not stopped and under safety cap
+    if (data.pending > 0 && ecomAutoRunning && ecomRunCount < ECOM_AUTO_MAX) {
+      if (btn) btn.innerHTML = `<span class="spinner"></span> Fetching... (${ecomRunCount} done, ${data.pending} pending)`;
+      ecomFetchBusy = false;
+      setTimeout(() => triggerEcomFetch(force, true), 2000); // 2s pause between batches
+      return;
+    } else {
+      // All done or stopped
+      ecomAutoRunning = false;
+      if (ecomRunCount > 1) {
+        const summary = document.createElement('div');
+        summary.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos); margin-bottom:8px;">✓ Completed ${ecomRunCount} batches — prices updated</div>`;
+        resultBox.prepend(summary);
+      }
+    }
+
   } catch (e) {
     clearTimeout(timeoutId);
+    ecomAutoRunning = false;
     const entry = document.createElement('div');
     entry.innerHTML = `<div class="notice danger">${e.name === 'AbortError' ? '⏱ Timed out — server may still be processing in the background.' : '✗ Failed: ' + escapeHtml(e.message)}</div>`;
     resultBox.prepend(entry);
   }
 
   ecomFetchBusy = false;
-  if (btn)      { btn.disabled = false;      btn.innerHTML = '🔄 Run Price Fetch Now'; }
+  ecomAutoRunning = false;
+  if (btn)      { btn.disabled = false; btn.innerHTML = '🔄 Run Price Fetch Now'; }
   if (forceBtn) { forceBtn.disabled = false; }
   if (stopBtn)  { stopBtn.style.display = 'none'; }
 }
 
+function startEcomAutoFetch(force = false) {
+  // Starts auto-continue loop — runs until all pending done or stopped
+  if (ecomAutoRunning) return;
+  ecomAutoRunning = true;
+  ecomRunCount = 0;
+  triggerEcomFetch(force, false);
+}
+
 function stopEcomFetch() {
-  // Marks busy = false so next run is accepted; can't cancel in-flight HTTP
+  // Sets flag so next batch doesn't auto-trigger; can't cancel in-flight HTTP
+  ecomAutoRunning = false;
   ecomFetchBusy = false;
   const stopBtn  = document.getElementById('ecomFetchStopBtn');
   const btn      = document.getElementById('ecomFetchBtn');
@@ -225,7 +268,7 @@ function stopEcomFetch() {
   if (btn)      { btn.disabled = false; btn.innerHTML = '🔄 Run Price Fetch Now'; }
   if (forceBtn) forceBtn.disabled = false;
   const note = document.createElement('div');
-  note.innerHTML = `<div class="notice warn" style="margin-bottom:8px;">Stopped — current batch will still complete on the server.</div>`;
+  note.innerHTML = `<div class="notice warn" style="margin-bottom:8px;">⏹ Stopped — current batch will still complete on server.</div>`;
   resultBox.prepend(note);
 }
 
