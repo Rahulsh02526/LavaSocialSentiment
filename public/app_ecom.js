@@ -78,6 +78,7 @@ function renderEcomView() {
               <th>Status</th>
               <th>Amazon</th>
               <th>Flipkart</th>
+              <th onclick="sortEcom('price_last_updated')" style="cursor:pointer;" title="Last price fetch date">Updated</th>
               <th onclick="sortEcom('num_comments')" style="cursor:pointer;">Comments</th>
               <th>Tagged</th>
             </tr>
@@ -142,6 +143,7 @@ function renderEcomTable() {
       <td>${lifecycleBadge(status)}</td>
       <td>${availBadge(p.amazon_available)}</td>
       <td>${availBadge(p.flipkart_available)}</td>
+      <td style="font-size:11px; color:var(--text-dim);">${p.price_last_updated || '–'}</td>
       <td class="num">${commentCount}</td>
       <td class="num">${taggedCount}/${commentCount}</td>
     </tr>`;
