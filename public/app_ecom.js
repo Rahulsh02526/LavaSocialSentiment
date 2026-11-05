@@ -160,7 +160,7 @@ async function triggerEcomFetch(force = false) {
   const timeoutId  = setTimeout(() => controller.abort(), 65000); // 65s — just over Vercel's 60s limit
 
   try {
-    const url = '/api/cron-ecom-scrape' + (force ? '?force=true' : '');
+    const url = '/api/prices?action=scrape' + (force ? '&force=true' : '');
     const resp = await fetch(url, {
       headers: { 'x-auth-token': AUTH.adminToken || '' },
       signal: controller.signal,
