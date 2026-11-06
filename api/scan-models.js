@@ -569,6 +569,30 @@ module.exports = async (req, res) => {
   // All other actions require admin
   if (!requireAdmin(req, res)) return;
 
+  // Debug action — returns raw HTML snippet to diagnose GSMArena parsing issues
+  // GET /api/scan-models?action=debug  (admin only)
+  if (action === 'debug') {
+    try {
+      const { status, body } = await fetchUrl(
+        'https://www.gsmarena.com/search.php3?chk5G=selected&chkIndia=selected&sortBy=0&fYearMin=2026&sOSes=2'
+      );
+      // Return first 8000 chars — enough to see the phone list structure
+      return res.status(200).json({
+        http_status: status,
+        body_length: body.length,
+        // Key structural markers
+        has_makers_div: body.includes('<div class="makers"'),
+        has_makers_ul:  body.includes('<ul class="makers"'),
+        first_php_link: (body.match(/href="([a-z0-9_-]+-\d+\.php)"/) || [])[1] || null,
+        // Raw snippet: first 5000 chars (enough to see structure)
+        html_start: body.substring(0, 2000),
+        html_mid:   body.substring(body.length / 2 | 0, (body.length / 2 | 0) + 3000),
+      });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
   if (action === 'scan') {
     const log = [];
     try {
