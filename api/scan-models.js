@@ -1,4 +1,4 @@
-// api/scan-models.js 
+// api/scan-models.js
 // Scan GSMArena India for newly launched phones and queue them for admin review.
 //
 // GET  /api/scan-models?action=status   — pending_models list (viewer)
@@ -14,25 +14,57 @@ const https = require('https');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function fetchUrl(url, extraHeaders = {}) {
+// Fetch a URL with redirect following (up to 5 hops) and realistic browser headers.
+// GSMArena returns 302 → www.gsmarena.com when hit without a Host header or with
+// a bare IP; following the redirect resolves it cleanly.
+function fetchUrl(url, extraHeaders = {}, _redirects = 0) {
   return new Promise((resolve, reject) => {
+    if (_redirects > 5) return reject(new Error('Too many redirects'));
     const parsed = new URL(url);
     const opts = {
       hostname: parsed.hostname,
       path: parsed.pathname + parsed.search,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-IN,en;q=0.9',
+        // Realistic desktop Chrome UA — mobile UA sometimes triggers Cloudflare challenges
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,en-IN;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
         ...extraHeaders,
       },
-      timeout: 15000,
+      timeout: 20000,
     };
     const req = https.get(opts, (res) => {
+      // Follow 301/302/303/307/308 redirects
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        const nextUrl = res.headers.location.startsWith('http')
+          ? res.headers.location
+          : `https://${parsed.hostname}${res.headers.location}`;
+        // Drain response before following
+        res.resume();
+        return resolve(fetchUrl(nextUrl, extraHeaders, _redirects + 1));
+      }
+      // Handle gzip/br compressed responses
+      let stream = res;
+      const encoding = res.headers['content-encoding'];
+      if (encoding === 'gzip' || encoding === 'deflate') {
+        const zlib = require('zlib');
+        stream = res.pipe(zlib.createGunzip());
+      } else if (encoding === 'br') {
+        const zlib = require('zlib');
+        stream = res.pipe(zlib.createBrotliDecompress());
+      }
       let body = '';
-      res.setEncoding('utf8');
-      res.on('data', chunk => { body += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      stream.setEncoding('utf8');
+      stream.on('data', chunk => { body += chunk; });
+      stream.on('end', () => resolve({ status: res.statusCode, body }));
+      stream.on('error', reject);
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
