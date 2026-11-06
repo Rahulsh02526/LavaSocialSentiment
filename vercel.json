@@ -1,26 +1,23 @@
 {
   "crons": [
     {
-      "path": "/api/cron-youtube-fetch",
+      "path": "/api/videos?action=cron",
       "schedule": "0 3 * * *"
     },
     {
       "path": "/api/prices?action=scrape",
       "schedule": "30 1 * * *"
+    },
+    {
+      "path": "/api/scan-models?action=scan",
+      "schedule": "0 2 * * 1"
     }
   ],
   "functions": {
-    "api/cron-youtube-fetch.js": {
-      "maxDuration": 60
-    },
-    "api/prices.js": {
-      "maxDuration": 60
-    },
-    "api/query.js": {
-      "maxDuration": 30
-    },
-    "api/tag.js": {
-      "maxDuration": 30
-    }
+    "api/videos.js":      { "maxDuration": 60 },
+    "api/prices.js":      { "maxDuration": 60 },
+    "api/scan-models.js": { "maxDuration": 60 },
+    "api/query.js":       { "maxDuration": 30 },
+    "api/tag.js":         { "maxDuration": 30 }
   }
 }
