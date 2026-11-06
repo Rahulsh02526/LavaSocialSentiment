@@ -89,16 +89,42 @@ function detectBrand(name) {
 
 // Scrape GSMArena India launches page — returns array of { name, url, thumb, announced }
 async function scrapeGSMArenaIndia(log) {
-  // GSMArena "newly announced" sorted by announced date, filtered to India
-  const urls = [
-    'https://www.gsmarena.com/search.php3?chk5G=selected&sQuickSearch=&fDisplayInchesMin=5.5&fDisplayInchesMax=7.5&fRAMMin=0&fStorageMin=0&chkIndia=selected&sortBy=0&sOSes=2&sMakers=',
-    // Also try brand-specific pages for tracked brands (but limit to avoid 60s timeout)
-    'https://www.gsmarena.com/search.php3?chk5G=selected&chkIndia=selected&sortBy=0&fYearMin=2026&sOSes=2',
+  // GSMArena search.php3 returns a Phone Finder FORM (not results) for GET requests —
+  // results load via JavaScript/POST. Instead, use brand listing pages which return
+  // static HTML with <div class="makers"><ul><li>... phone list directly.
+  //
+  // Strategy: fetch each tracked brand's GSMArena listing page, parse phones from there.
+  // Brand page URL format: https://www.gsmarena.com/samsung-phones-9.php
+  // These pages have static HTML phone lists — no JS needed.
+  const BRAND_SLUGS = [
+    { brand: 'samsung',   slug: 'samsung-phones-9'    },
+    { brand: 'realme',    slug: 'realme-phones-80'     },
+    { brand: 'xiaomi',    slug: 'xiaomi-phones-80'     },
+    { brand: 'redmi',     slug: 'xiaomi-phones-80'     }, // Redmi is under Xiaomi on GSMArena
+    { brand: 'poco',      slug: 'poco-phones-121'      },
+    { brand: 'vivo',      slug: 'vivo-phones-98'       },
+    { brand: 'iqoo',      slug: 'vivo-phones-98'       }, // iQOO under Vivo
+    { brand: 'oneplus',   slug: 'oneplus-phones-95'    },
+    { brand: 'motorola',  slug: 'motorola-phones-4'    },
+    { brand: 'nokia',     slug: 'nokia-phones-1'       },
+    { brand: 'tecno',     slug: 'tecno-phones-120'     },
+    { brand: 'infinix',   slug: 'infinix-phones-119'   },
+    { brand: 'oppo',      slug: 'oppo-phones-82'       },
+    { brand: 'nothing',   slug: 'nothing-phones-124'   },
+    { brand: 'lava',      slug: 'lava-phones-131'      },
   ];
+
+  // Only fetch first 6 brands per run to stay within 60s Vercel timeout
+  // Weekly cron rotates through all brands over time
+  const toFetch = BRAND_SLUGS.slice(0, 6);
+  const urls = toFetch.map(b => ({
+    url: `https://www.gsmarena.com/${b.slug}.php`,
+    brand: b.brand,
+  }));
 
   const found = new Map(); // url → phone obj (deduplicate)
 
-  for (const pageUrl of urls.slice(0, 1)) { // Only first URL to stay within timeout
+  for (const { url: pageUrl, brand: pageBrand } of urls) { // Fetch each brand page
     try {
       const { status, body } = await fetchUrl(pageUrl);
       log.push(`GSMArena fetch: HTTP ${status} (${body.length} bytes)`);
@@ -156,11 +182,12 @@ async function scrapeGSMArenaIndia(log) {
         }
       }
 
-      log.push(`Parsed ${found.size} phones from GSMArena`);
+      log.push(`Parsed ${found.size} phones so far (after ${pageBrand} page)`);
     } catch (e) {
-      log.push(`GSMArena fetch error: ${e.message}`);
+      log.push(`GSMArena fetch error (${pageBrand}): ${e.message}`);
     }
   }
+  log.push(`Total parsed: ${found.size} phones from GSMArena brand pages`);
 
   return Array.from(found.values());
 }
