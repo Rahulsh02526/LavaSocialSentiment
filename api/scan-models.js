@@ -104,35 +104,55 @@ async function scrapeGSMArenaIndia(log) {
       log.push(`GSMArena fetch: HTTP ${status} (${body.length} bytes)`);
       if (status !== 200 || body.length < 1000) continue;
 
-      // Parse phone entries from search results
-      // Pattern: <li> blocks with class "makers" or similar
-      // GSMArena search result format:
-      // <li>...<a href="phone-name-XXXX.php"><img src="..."/><span>Name</span></a></li>
-      const liMatches = body.matchAll(/<li[^>]*>[\s\S]*?<a href="([^"]+\.php)"[^>]*>[\s\S]*?<img[^>]*src="([^"]*)"[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/g);
+      // ── Parse GSMArena search results ───────────────────────────────────────
+      // Actual HTML structure (confirmed from GSMArena source):
+      //   <div class="makers">
+      //     <ul>
+      //       <li>
+      //         <a href="samsung-galaxy-s25-12755.php">
+      //           <img src="https://cdn2.gsmarena.com/vv/bigpic/samsung-galaxy-s25.jpg" .../>
+      //           <strong><span>Samsung Galaxy S25</span></strong>
+      //         </a>
+      //       </li>
+      //       ...
+      //     </ul>
+      //   </div>
+      //
+      // Strategy: find all <a href="...NNN.php"> links inside the makers section,
+      // then grab the nearest <span> text. Using two separate simple regexes is
+      // much more reliable than one complex multi-line pattern.
 
-      for (const m of liMatches) {
-        const path = m[1];
-        const thumb = m[2];
-        const rawName = m[3].replace(/<[^>]+>/g, '').trim();
-        if (!rawName || rawName.length < 4) continue;
+      // Step 1: Find the makers section
+      const makersStart = body.indexOf('<div class="makers"');
+      const makersEnd   = body.indexOf('</div>', makersStart > -1 ? makersStart : 0);
+      const section     = makersStart > -1
+        ? body.substring(makersStart, makersEnd > makersStart ? makersEnd + 100000 : body.length)
+        : body; // fall back to full body
+
+      // Step 2: Extract all anchor+span pairs — simple, non-greedy
+      // Pattern: href="slug-DIGITS.php" ... <span>Name</span>
+      // Each <li> block is typically < 400 chars so .{0,400} is safe
+      const anchorRe = /href="([a-z0-9_][a-z0-9_-]+-\d+\.php)"[^>]*>((?:.|\n){0,500}?)<\/a>/g;
+      let m;
+      while ((m = anchorRe.exec(section)) !== null) {
+        const path    = m[1];
+        const inner   = m[2];
+
+        // Skip nav/filter/pagination links (no span with phone name)
+        const spanM   = /<span[^>]*>([^<]{3,80})<\/span>/.exec(inner);
+        if (!spanM) continue;
+        const rawName = spanM[1].replace(/&amp;/g, '&').trim();
+
+        // Skip obviously non-phone spans (numbers only, very short, review counts etc.)
+        if (!rawName || rawName.length < 4 || /^\d+$/.test(rawName)) continue;
+
+        // Extract thumbnail if present
+        const imgM    = /src="(https?:\/\/[^"]+)"/.exec(inner);
+        const thumb   = imgM ? imgM[1] : null;
 
         const fullUrl = 'https://www.gsmarena.com/' + path;
         if (!found.has(fullUrl)) {
           found.set(fullUrl, { name: rawName, url: fullUrl, thumb, announced: null });
-        }
-      }
-
-      // Fallback: simpler pattern for phone names
-      if (found.size === 0) {
-        const spans = body.matchAll(/href="([a-z0-9_-]+-\d+\.php)"[^>]*>[\s\S]*?<span[^>]*>([\w\s]+?(?:5G|4G|Pro|Plus|Ultra|Lite|Max)?[\w\s]*?)<\/span>/g);
-        for (const s of spans) {
-          const path = s[1];
-          const name = s[2].trim();
-          if (name.length < 4 || /^\d/.test(name)) continue;
-          const fullUrl = 'https://www.gsmarena.com/' + path;
-          if (!found.has(fullUrl)) {
-            found.set(fullUrl, { name, url: fullUrl, thumb: null, announced: null });
-          }
         }
       }
 
