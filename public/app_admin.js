@@ -133,13 +133,30 @@ function renderAdminView() {
 
         <div class="field">
           <label>Connectivity</label>
-          <input type="text" id="am_connectivity" placeholder="e.g. 5G, NFC, IP54">
+          <input type="text" id="am_connectivity" placeholder="e.g. 5G, NFC, IP54, WiFi 6, Bluetooth 5.3">
         </div>
         <div class="field">
           <label>Weight (g)</label>
           <input type="number" id="am_weight" placeholder="e.g. 185">
         </div>
         <div></div>
+
+        <!-- Key USPs — manual entries that can't be auto-derived from specs -->
+        <div style="grid-column:1/-1; margin-top:4px;">
+          <div style="font-size:11px; font-weight:700; letter-spacing:0.1em; color:var(--text-faint); text-transform:uppercase; margin-bottom:10px;">
+            Key USPs
+            <span style="font-weight:400; color:var(--text-faint);">(optional — things not auto-detectable from specs above)</span>
+          </div>
+        </div>
+
+        <div class="field" style="grid-column:1/-1;">
+          <label>Key USPs <span style="color:var(--text-faint); font-weight:400;">(comma-separated — for unique hardware/software differentiators)</span></label>
+          <input type="text" id="am_key_usps"
+            placeholder="e.g. Dual Screen, Curved Display, Gorilla Glass Victus 2, Under-display Fingerprint, Satellite Connectivity">
+          <div style="font-size:10px; color:var(--text-faint); margin-top:4px;">
+            💡 5G, NFC, AMOLED, 120Hz etc. are <b>auto-detected</b> from specs above — only add truly unique differentiators here
+          </div>
+        </div>
 
       </div>
 
@@ -190,22 +207,6 @@ function renderAdminView() {
 
     <!-- VARIANT PRICING -->
     <div id="variantPricingSection"></div>
-
-    <!-- BULK E-COM URL UPDATE -->
-    <div class="panel" style="margin-bottom:20px;">
-      <div class="panel-title" style="margin-bottom:4px;">🔗 Bulk Update E-com URLs (Amazon + Flipkart)</div>
-      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">
-        Upload a CSV with model names + Amazon/Flipkart product URLs. These URLs are used by the daily price scraper.
-        Download the template below — model names are pre-filled from the platform.
-      </div>
-      <div id="urlBulkStatus"></div>
-      <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-        <input type="file" id="urlBulkFile" accept=".csv,.xlsx,.xls" style="font-size:12px; color:var(--text-dim);" onchange="previewUrlBulkAdmin(this)">
-        <a href="#" onclick="event.preventDefault(); downloadEcomUrlTemplate()" style="font-size:11px; color:var(--accent);">⬇ Download Template</a>
-      </div>
-      <div style="font-size:11px; color:var(--text-faint);">Columns: model_name · amazon_url · flipkart_url</div>
-      <div id="urlBulkPreview" style="margin-top:12px;"></div>
-    </div>
 
     <!-- ECOM COMMENTS PASTE UPLOAD -->
     <div class="panel" style="margin-bottom:20px;">
@@ -277,6 +278,20 @@ function renderAdminView() {
       <div id="assetsPreview"></div>
     </div>
 
+    <!-- SCAN FOR NEW MODELS -->
+    <div class="panel" style="margin-bottom:20px;" id="scanNewModelsPanel">
+      <div class="panel-title" style="margin-bottom:4px;">🔍 Scan for New Models</div>
+      <div style="font-size:12px; color:var(--text-faint); margin-bottom:14px;">
+        Scans GSMArena India for newly launched smartphones (5G, ₹5K–₹50K, tracked brands). Weekly auto-scan runs every Monday. Use manual scan anytime to pick up new launches immediately.
+      </div>
+      <div id="scanStatusBox"></div>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px;">
+        <button class="primary" id="scanNowBtn" onclick="triggerModelScan()">🔍 Scan Now</button>
+        <span style="font-size:11px; color:var(--text-faint);">Auto-scan: every Monday at 2am UTC</span>
+      </div>
+      <div id="pendingModelsSection"></div>
+    </div>
+
     <!-- PRICE UPDATE (single model) -->
     <div class="panel">
       <div class="panel-title" style="margin-bottom:16px;">💰 Update Current Price (Single Model)</div>
@@ -316,12 +331,17 @@ function renderAdminView() {
   document.getElementById('am_brand').addEventListener('change', function() {
     document.getElementById('am_brand_other_wrap').style.display = this.value === '_other' ? 'block' : 'none';
   });
+
+  // Load pending models for scan section
+  loadPendingModels();
 }
 
 // ── Excel Upload: Models ──
 const MODEL_COLUMNS = ['model','brand','launch_date','launch_price_inr','price_segment',
   'amazon_available','flipkart_available','processor','ram_variants','storage_variants',
-  'display','battery_mah','fast_charging_w','rear_camera','front_camera','os','connectivity','weight_g'];
+  'display','battery_mah','fast_charging_w','rear_camera','front_camera','os','connectivity','weight_g',
+  'key_usps'  // comma-separated unique differentiators e.g. "Dual Screen, Gorilla Glass Victus 2"
+];
 
 async function parseModelXlsx() {
   const file = document.getElementById('modelXlsx').files[0];
@@ -475,6 +495,7 @@ function parseXlsxFile(file, columnKeys) {
           'display': 'display', 'battery_mah': 'battery_mah', 'fast_charging_w': 'fast_charging_w',
           'rear_camera': 'rear_camera', 'front_camera': 'front_camera',
           'os': 'os', 'connectivity': 'connectivity', 'weight_g': 'weight_g',
+          'key_usps': 'key_usps', 'key_usps_comma_sep': 'key_usps', 'usps': 'key_usps',
           'source': 'source', 'ecom_rating': 'ecom_rating', 'rating_1_5': 'ecom_rating',
           'no_of_reviews': 'num_reviews', 'num_reviews': 'num_reviews',
           'noted_date': 'noted_date', 'date_yyyy_mm_dd': 'noted_date',
@@ -513,180 +534,12 @@ function parseXlsxFile(file, columnKeys) {
   });
 }
 
-// ── Template download helpers — generate CSV on-the-fly, no server file needed ──
-
-// Helper: wrap a cell value in quotes if it contains comma/quote/newline
-function _csvCell(v) {
-  const s = (v === null || v === undefined) ? '' : String(v);
-  return (s.includes(',') || s.includes('"') || s.includes('\n'))
-    ? '"' + s.replace(/"/g, '""') + '"'
-    : s;
-}
-
-function _csvRow(arr) {
-  return arr.map(_csvCell).join(',');
-}
-
+// ── Template download helpers (redirect to static files if hosted, else alert) ──
 function downloadModelTemplate() {
-  // Columns match the bulk model upload parser in parseModelsXlsx()
-  const headers = _csvRow([
-    'model','brand','launch_date','launch_price_inr',
-    'amazon_available','flipkart_available','price_segment',
-    'processor','ram_variants','storage_variants',
-    'display','battery_mah','fast_charging_w',
-    'rear_camera','front_camera','os','connectivity','weight_g',
-    'amazon_url','flipkart_url'
-  ]);
-  // Example row — values with commas are auto-quoted by _csvRow
-  const example = _csvRow([
-    'LAVA Model X','lava','2024-11-01','12999',
-    'Yes','Yes','entry_mid',
-    'Snapdragon 4 Gen 2','4GB,6GB','64GB,128GB',
-    '6.5" HD+ 90Hz','5000','18W',
-    '50MP+2MP','8MP','Android 14','4G,WiFi,BT,NFC','195',
-    'https://www.amazon.in/dp/EXAMPLE','https://www.flipkart.com/EXAMPLE'
-  ]);
-  _downloadCsv(headers + '\n' + example, 'SIP_Model_Upload_Template.csv');
+  alert('Download "SIP_Model_Upload_Template.xlsx" from the files shared by the platform admin, or ask them to place it in /public/templates/.');
 }
-
 function downloadRatingsTemplate() {
-  const headers = _csvRow(['model_name','amazon_rating','amazon_review_count','flipkart_rating','flipkart_review_count']);
-  const phones = (typeof STATE !== 'undefined' && STATE.phones) ? STATE.phones : [];
-  const rows = phones.map(p => _csvRow([p.model, '', '', '', '']));
-  _downloadCsv([headers, ...rows].join('\n'), 'SIP_Ecom_Ratings_Template.csv');
-}
-
-function downloadEcomUrlTemplate() {
-  const headers = _csvRow(['model_name','amazon_url','flipkart_url']);
-  const phones = (typeof STATE !== 'undefined' && STATE.phones) ? STATE.phones : [];
-  const rows = phones.map(p => _csvRow([p.model, p.amazon_url || '', p.flipkart_url || '']));
-  _downloadCsv([headers, ...rows].join('\n'), 'SIP_EcomURLs_Template.csv');
-}
-
-// ── Bulk E-com URL upload (admin panel) ──
-
-async function previewUrlBulkAdmin(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const preview = document.getElementById('urlBulkPreview');
-  const status  = document.getElementById('urlBulkStatus');
-  preview.innerHTML = '<div class="notice"><span class="spinner"></span> Reading file…</div>';
-  status.innerHTML  = '';
-
-  let rows = [];
-
-  try {
-    if (file.name.endsWith('.csv')) {
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
-      const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,'').toLowerCase().replace(/\s+/g,'_'));
-      const nameIdx = rawHeaders.findIndex(h => h === 'model_name' || h === 'model');
-      const amzIdx  = rawHeaders.findIndex(h => h.includes('amazon'));
-      const fkIdx   = rawHeaders.findIndex(h => h.includes('flipkart'));
-      if (nameIdx === -1) { preview.innerHTML = '<div class="notice danger">Column "model_name" not found.</div>'; return; }
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g,''));
-        const model_name   = cols[nameIdx] || '';
-        const amazon_url   = amzIdx  >= 0 ? (cols[amzIdx]  || null) : null;
-        const flipkart_url = fkIdx   >= 0 ? (cols[fkIdx]   || null) : null;
-        if (model_name) rows.push({ model_name, amazon_url, flipkart_url });
-      }
-    } else {
-      if (typeof XLSX === 'undefined') { preview.innerHTML = '<div class="notice danger">SheetJS not loaded — please use CSV format.</div>'; return; }
-      const buf  = await file.arrayBuffer();
-      const wb   = XLSX.read(buf, { type: 'array' });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      rows = data.map(r => {
-        const get = (...keys) => {
-          for (const k of keys) {
-            const found = Object.keys(r).find(h => h.trim().toLowerCase().replace(/\s+/g,'_') === k);
-            if (found && r[found]) return String(r[found]).trim();
-          }
-          return null;
-        };
-        return {
-          model_name:   get('model_name','model'),
-          amazon_url:   get('amazon_url','amazon') || null,
-          flipkart_url: get('flipkart_url','flipkart') || null,
-        };
-      }).filter(r => r.model_name);
-    }
-  } catch(e) {
-    preview.innerHTML = `<div class="notice danger">Parse error: ${e.message}</div>`;
-    return;
-  }
-
-  if (!rows.length) {
-    preview.innerHTML = '<div class="notice danger">No data rows found. Use columns: model_name, amazon_url, flipkart_url</div>';
-    return;
-  }
-
-  // Match to known models
-  const modelMap = {};
-  (STATE.phones || []).forEach(p => { modelMap[p.model.trim().toLowerCase()] = p; });
-  const matched   = rows.filter(r => modelMap[(r.model_name||'').trim().toLowerCase()]);
-  const unmatched = rows.filter(r => !modelMap[(r.model_name||'').trim().toLowerCase()]);
-
-  window._pendingUrlRows = matched;
-
-  preview.innerHTML = `
-    <div style="font-size:12px; color:var(--text-faint); margin-bottom:8px;">
-      ${matched.length} matched · ${unmatched.length} unmatched
-      ${unmatched.length ? `<div style="color:var(--neg); font-size:11px; margin-top:4px;">Not found: ${unmatched.map(r => escapeHtml(r.model_name)).join(', ')}</div>` : ''}
-    </div>
-    <div class="table-wrap" style="max-height:220px; overflow-y:auto; margin-bottom:10px;">
-      <table>
-        <thead><tr><th>Model</th><th>Amazon URL</th><th>Flipkart URL</th></tr></thead>
-        <tbody>
-          ${matched.map(r => `<tr>
-            <td style="font-size:11px; font-weight:500;">${escapeHtml(r.model_name)}</td>
-            <td style="font-size:10px; color:${r.amazon_url   ? '#FF9900'   : 'var(--border)'};">${r.amazon_url   ? '✓ set' : '–'}</td>
-            <td style="font-size:10px; color:${r.flipkart_url ? '#2874F0' : 'var(--border)'};">${r.flipkart_url ? '✓ set' : '–'}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-    ${matched.length ? `
-    <div style="display:flex; gap:10px;">
-      <button class="primary" onclick="submitUrlBulkAdmin()">✓ Save URLs for ${matched.length} Model(s)</button>
-      <button class="ghost" onclick="document.getElementById('urlBulkPreview').innerHTML=''; window._pendingUrlRows=null;">Cancel</button>
-    </div>` : ''}
-  `;
-}
-
-async function submitUrlBulkAdmin() {
-  const rows = window._pendingUrlRows;
-  if (!rows || !rows.length) return;
-  const status = document.getElementById('urlBulkStatus');
-  status.innerHTML = '<div class="notice"><span class="spinner"></span> Saving…</div>';
-  try {
-    const result = await apiPost('/api/models?action=update-ecom-urls', { rows });
-    // Update STATE so template download reflects new URLs immediately
-    rows.forEach(r => {
-      const phone = (STATE.phones || []).find(p => p.model.trim().toLowerCase() === r.model_name.trim().toLowerCase());
-      if (phone) {
-        if (r.amazon_url)   phone.amazon_url   = r.amazon_url;
-        if (r.flipkart_url) phone.flipkart_url = r.flipkart_url;
-      }
-    });
-    window._pendingUrlRows = null;
-    document.getElementById('urlBulkPreview').innerHTML = '';
-    status.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${result.message}</div>`;
-  } catch(e) {
-    status.innerHTML = `<div class="notice danger">Error: ${e.message}</div>`;
-  }
-}
-
-function _downloadCsv(csv, filename) {
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
+  alert('Download "SIP_Ecom_Ratings_Template.xlsx" from the files shared by the platform admin.');
 }
 async function submitAddModel() {
   const statusEl = document.getElementById('addModelStatus');
@@ -705,11 +558,13 @@ async function submitAddModel() {
     return;
   }
 
-  // parse RAM/Storage variants
+  // parse RAM/Storage/USP variants (all comma-separated)
   const ramRaw     = document.getElementById('am_ram').value.trim();
   const storageRaw = document.getElementById('am_storage').value.trim();
+  const uspRaw     = document.getElementById('am_key_usps').value.trim();
   const ram_variants     = ramRaw     ? ramRaw.split(',').map(s => s.trim()).filter(Boolean)     : [];
   const storage_variants = storageRaw ? storageRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const key_usps         = uspRaw     ? uspRaw.split(',').map(s => s.trim()).filter(Boolean)     : [];
 
   const payload = {
     model,
@@ -730,6 +585,7 @@ async function submitAddModel() {
     os:                 document.getElementById('am_os').value.trim(),
     connectivity:       document.getElementById('am_connectivity').value.trim(),
     weight_g:           document.getElementById('am_weight').value,
+    key_usps,           // text[] — unique differentiators like Dual Screen, Gorilla Glass Victus 2 etc.
   };
 
   statusEl.innerHTML = `<div class="notice"><span class="spinner"></span> Adding model...</div>`;
@@ -755,7 +611,7 @@ async function submitAddModel() {
 function clearAddModelForm() {
   ['am_model','am_brand_other','am_processor','am_ram','am_storage',
    'am_display','am_battery','am_charging','am_rear_cam','am_front_cam',
-   'am_os','am_connectivity','am_weight','am_price'].forEach(id => {
+   'am_os','am_connectivity','am_weight','am_price','am_key_usps'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -1448,5 +1304,228 @@ async function submitEcomPaste() {
     renderTopbar();
   } catch(e) {
     statusEl.innerHTML = `<div class="notice danger">Upload failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── New Model Scanner ──────────────────────────────────────────────────────
+
+async function triggerModelScan() {
+  const btn = document.getElementById('scanNowBtn');
+  const statusBox = document.getElementById('scanStatusBox');
+  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Scanning...`; }
+  statusBox.innerHTML = `<div class="notice"><span class="spinner"></span> Scanning GSMArena India for new models...</div>`;
+
+  try {
+    const result = await apiPost('/api/scan-models?action=scan', {});
+    statusBox.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
+    if (result.log?.length) {
+      statusBox.innerHTML += `<div style="font-size:11px; font-family:var(--mono); background:var(--panel-2); padding:8px 10px; border-radius:6px; line-height:1.7; margin-top:6px; color:var(--text-dim);">${result.log.map(l => escapeHtml(l)).join('<br>')}</div>`;
+    }
+    // Reload pending list
+    loadPendingModels();
+  } catch(e) {
+    statusBox.innerHTML = `<div class="notice danger">Scan failed: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '🔍 Scan Now'; }
+  }
+}
+
+async function loadPendingModels() {
+  const section = document.getElementById('pendingModelsSection');
+  if (!section) return;
+
+  try {
+    const data = await apiGet('/api/scan-models?action=status');
+    const pending = (data.pending || []).filter(p => p.status === 'pending');
+    const approved = (data.pending || []).filter(p => p.status === 'approved');
+    const rejected = (data.pending || []).filter(p => p.status === 'rejected');
+
+    if (!data.pending?.length) {
+      section.innerHTML = `<div style="font-size:12px; color:var(--text-faint); padding:12px 0;">No scan results yet. Click "Scan Now" to find new models.</div>`;
+      return;
+    }
+
+    section.innerHTML = `
+      <div style="font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-faint); margin-bottom:12px;">
+        Pending Review: ${pending.length} · Approved: ${approved.length} · Rejected: ${rejected.length}
+      </div>
+
+      ${pending.length > 0 ? `
+        <div id="pendingModelsList">
+          ${pending.length > 1 ? `
+            <div style="display:flex; gap:8px; margin-bottom:12px; align-items:center;">
+              <label style="font-size:12px; color:var(--text-faint);">
+                <input type="checkbox" id="selectAllPending" onchange="toggleSelectAllPending(this.checked)" style="margin-right:6px;">
+                Select all (${pending.length})
+              </label>
+              <button class="small primary" onclick="bulkApprovePending()">✓ Approve Selected</button>
+            </div>
+          ` : ''}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  ${pending.length > 1 ? '<th style="width:32px;"></th>' : ''}
+                  <th>Model</th>
+                  <th>Brand</th>
+                  <th>Announced</th>
+                  <th class="num">Est. Price</th>
+                  <th>Processor</th>
+                  <th>Battery</th>
+                  <th>5G</th>
+                  <th>Scanned</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${pending.map(p => {
+                  const usps = Array.isArray(p.suggested_usps) ? p.suggested_usps : [];
+                  const uspBadges = usps.map((u, i) => `
+                    <span id="susp-${p.id}-${i}" style="display:inline-flex; align-items:center; gap:3px; padding:2px 7px; border-radius:10px; font-size:10px; font-weight:600; background:rgba(234,179,8,0.15); color:#ca8a04; border:1px solid rgba(234,179,8,0.35); cursor:default; white-space:nowrap;"
+                      title="${escapeHtml(u)} — auto-detected from GSMArena scan. Click × to remove before approving.">
+                      ✦ ${escapeHtml(u)}
+                      <span onclick="removeSuggestedUsp(${p.id},${i})" title="Remove this suggestion" style="cursor:pointer; opacity:0.7; font-size:11px; margin-left:1px; line-height:1;">×</span>
+                    </span>`).join('');
+                  const uspBlock = usps.length ? `
+                    <div id="uspblock-${p.id}" style="margin-top:5px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                      <span style="font-size:9px; font-weight:700; text-transform:uppercase; color:#ca8a04; letter-spacing:0.05em; margin-right:2px;">Suggested USPs:</span>
+                      ${uspBadges}
+                      <span onclick="clearAllSuggestedUsps(${p.id})" title="Remove all suggested USPs" style="font-size:10px; color:var(--text-faint); cursor:pointer; padding:1px 5px; border-radius:8px; border:1px dashed var(--border); margin-left:2px;">clear all</span>
+                    </div>` : '';
+                  return `
+                  <tr id="pending-row-${p.id}">
+                    ${pending.length > 1 ? `<td><input type="checkbox" class="pending-checkbox" value="${p.id}"></td>` : ''}
+                    <td style="font-weight:600;">
+                      <a href="${escapeHtml(p.gsmarena_url || '#')}" target="_blank" style="color:var(--accent);">${escapeHtml(p.model_name)}</a>
+                      ${uspBlock}
+                    </td>
+                    <td style="text-transform:capitalize;">${escapeHtml(p.brand || '–')}</td>
+                    <td style="font-size:11px;">${escapeHtml(p.announced || '–')}</td>
+                    <td class="num" style="color:${p.estimated_price ? 'var(--text)' : 'var(--text-faint)'};">
+                      ${p.estimated_price ? '₹' + Math.round(p.estimated_price).toLocaleString('en-IN') : '–'}
+                    </td>
+                    <td style="font-size:10px; color:var(--text-dim); max-width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(p.processor || '–')}</td>
+                    <td style="font-size:11px;">${p.battery_mah ? p.battery_mah + ' mAh' : '–'}</td>
+                    <td style="text-align:center;">${p.is_5g ? '<span class="badge pos">5G</span>' : '<span class="badge gray">4G</span>'}</td>
+                    <td style="font-size:11px; color:var(--text-faint);">${escapeHtml(p.scanned_at || '–')}</td>
+                    <td>
+                      <div style="display:flex; gap:6px;">
+                        <button class="small primary" onclick="approvePendingModel(${p.id})" title="Add to platform with suggested USPs as key_usps">✓ Add</button>
+                        <button class="small" onclick="rejectPendingModel(${p.id})" title="Not relevant" style="color:var(--neg); border-color:var(--neg);">✗</button>
+                      </div>
+                    </td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : `<div style="font-size:12px; color:var(--pos); padding:8px 0;">✓ No pending models — all reviewed.</div>`}
+
+      ${approved.length > 0 ? `
+        <details style="margin-top:14px;">
+          <summary style="font-size:11px; color:var(--text-faint); cursor:pointer;">▸ Show ${approved.length} approved model(s)</summary>
+          <div style="margin-top:8px; font-size:11px; color:var(--text-dim);">
+            ${approved.map(p => `<div>✓ ${escapeHtml(p.model_name)} — added ${escapeHtml(p.approved_at || p.scanned_at || '')}</div>`).join('')}
+          </div>
+        </details>
+      ` : ''}
+    `;
+  } catch(e) {
+    section.innerHTML = `<div style="font-size:12px; color:var(--neg);">Could not load pending models: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function toggleSelectAllPending(checked) {
+  document.querySelectorAll('.pending-checkbox').forEach(cb => cb.checked = checked);
+}
+
+// Collect currently visible suggested USP badges for a pending row (ones not dismissed by admin)
+function getVisibleSuggestedUsps(pendingId) {
+  const block = document.getElementById(`uspblock-${pendingId}`);
+  if (!block) return [];
+  // Each badge span has id="susp-{id}-{i}" and contains the USP text
+  const badges = block.querySelectorAll(`[id^="susp-${pendingId}-"]`);
+  const usps = [];
+  badges.forEach(badge => {
+    // Text content = "✦ {USP name} ×" — strip decorations
+    let txt = badge.textContent.replace('✦', '').replace('×', '').trim();
+    if (txt) usps.push(txt);
+  });
+  return usps;
+}
+
+// Remove a single suggested USP badge (admin dismissal before approve)
+function removeSuggestedUsp(pendingId, idx) {
+  const badge = document.getElementById(`susp-${pendingId}-${idx}`);
+  if (badge) badge.remove();
+  // If no badges left, hide the whole block label too
+  const block = document.getElementById(`uspblock-${pendingId}`);
+  if (block && !block.querySelectorAll(`[id^="susp-${pendingId}-"]`).length) {
+    block.remove();
+  }
+}
+
+// Remove all suggested USP badges for a row
+function clearAllSuggestedUsps(pendingId) {
+  const block = document.getElementById(`uspblock-${pendingId}`);
+  if (block) block.remove();
+}
+
+async function approvePendingModel(id) {
+  const row = document.getElementById(`pending-row-${id}`);
+  if (row) row.style.opacity = '0.5';
+  try {
+    // Collect any remaining (non-dismissed) suggested USPs from the UI
+    const approvedUsps = getVisibleSuggestedUsps(id);
+    const result = await apiPost('/api/scan-models?action=approve', {
+      id,
+      approved_usps: approvedUsps.length ? approvedUsps : undefined,
+    });
+    // Success — refresh pending list and STATE
+    const fresh = await apiGet('/api/data');
+    STATE.phones = fresh.phones; STATE.specs = fresh.specs;
+    renderTopbar();
+    loadPendingModels();
+    // Show brief success note in status box
+    const sb = document.getElementById('scanStatusBox');
+    if (sb) sb.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">${escapeHtml(result.message)}</div>`;
+  } catch(e) {
+    if (row) row.style.opacity = '1';
+    alert('Approve failed: ' + e.message);
+  }
+}
+
+async function rejectPendingModel(id) {
+  const row = document.getElementById(`pending-row-${id}`);
+  if (row) row.style.opacity = '0.5';
+  try {
+    await apiPost('/api/scan-models?action=reject', { id });
+    loadPendingModels();
+  } catch(e) {
+    if (row) row.style.opacity = '1';
+    alert('Reject failed: ' + e.message);
+  }
+}
+
+async function bulkApprovePending() {
+  const checked = [...document.querySelectorAll('.pending-checkbox:checked')].map(cb => parseInt(cb.value));
+  if (!checked.length) { alert('Select at least one model.'); return; }
+
+  const statusBox = document.getElementById('scanStatusBox');
+  statusBox.innerHTML = `<div class="notice"><span class="spinner"></span> Adding ${checked.length} model(s)...</div>`;
+
+  try {
+    const result = await apiPost('/api/scan-models?action=bulk-approve', { ids: checked });
+    statusBox.innerHTML = `<div class="notice" style="border-color:var(--pos); color:var(--pos);">✓ ${escapeHtml(result.message)}</div>`;
+    if (result.errors?.length) {
+      statusBox.innerHTML += `<div class="notice danger" style="margin-top:6px;">${result.errors.map(e => escapeHtml(e)).join('<br>')}</div>`;
+    }
+    const fresh = await apiGet('/api/data');
+    STATE.phones = fresh.phones; STATE.specs = fresh.specs;
+    renderTopbar();
+    loadPendingModels();
+  } catch(e) {
+    statusBox.innerHTML = `<div class="notice danger">Bulk approve failed: ${escapeHtml(e.message)}</div>`;
   }
 }
