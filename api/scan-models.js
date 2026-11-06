@@ -1,4 +1,4 @@
-// api/scan-models.js
+// api/scan-models.js 
 // Scan GSMArena India for newly launched phones and queue them for admin review.
 //
 // GET  /api/scan-models?action=status   — pending_models list (viewer)
